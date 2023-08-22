@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS transaction (
     sequence    BIGINT,   -- wallet 的 sequence
     payee       BLOB,     -- user id
     sub_payee   BLOB,     -- user id, sub payee
-    status      TINYINT,  -- int8, 0: preparing, 1: prepared, 2: committing, 3: committed
+    status      TINYINT,  -- int8, -2: canceled, -1: canceling, 0: preparing, 1: prepared, 2: committing, 3: committed
     kind        TEXT,     -- award, topup, expenditure, sponsor, subscribe, etc.
     amount      BIGINT,   -- total amount of Yiwen Coin that payer pays
     sys_fee     BIGINT,   -- amount of Yiwen Coin to system as fee

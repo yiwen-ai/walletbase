@@ -1,11 +1,14 @@
-use axum_web::erring::HTTPError;
+use anyhow::anyhow;
+use futures::{future::BoxFuture, join};
+use futures_util::FutureExt;
 use std::str::FromStr;
 use strum_macros::{AsRefStr, EnumString};
 
+use axum_web::erring::HTTPError;
 use scylla_orm::{ColumnsMap, CqlValue, ToCqlVal};
 use scylla_orm_macros::CqlOrm;
 
-use super::{income_fee_rate, HMacTag, Wallet, SYS_FEE_RATE, SYS_ID};
+use super::{income_fee_rate, Credit, CreditKind, HMacTag, Wallet, SYS_FEE_RATE, SYS_ID};
 use crate::db::scylladb::{self, extract_applied};
 
 #[derive(AsRefStr, Debug, EnumString, PartialEq)]
@@ -18,6 +21,12 @@ pub enum TransactionKind {
     Subscribe,
     Withdraw,
     Refund,
+}
+
+impl ToString for TransactionKind {
+    fn to_string(&self) -> String {
+        self.as_ref().to_string()
+    }
 }
 
 impl TransactionKind {
@@ -179,6 +188,28 @@ impl TransactionKind {
         Ok(())
     }
 
+    pub fn rollback_payer_balance(&self, wallet: &mut Wallet, amount: i64) -> anyhow::Result<()> {
+        match self {
+            TransactionKind::Award => {
+                wallet.award += amount;
+            }
+            TransactionKind::Topup | TransactionKind::Refund => {
+                wallet.topup += amount;
+            }
+            TransactionKind::Withdraw => {
+                wallet.income += amount;
+            }
+            TransactionKind::Expenditure
+            | TransactionKind::Sponsor
+            | TransactionKind::Subscribe => {
+                // can not rollback to award or income balance.
+                wallet.topup += amount;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn add_payee_balance(&self, wallet: &mut Wallet, amount: i64) -> anyhow::Result<()> {
         match self {
             TransactionKind::Award => {
@@ -204,7 +235,7 @@ impl TransactionKind {
                 if sys_fee < 1 {
                     sys_fee = 1;
                 }
-                return (sys_fee, 0);
+                (sys_fee, 0)
             }
 
             TransactionKind::Sponsor | TransactionKind::Subscribe => {
@@ -219,7 +250,7 @@ impl TransactionKind {
                 } else {
                     0
                 };
-                return (sys_fee, sub_shares);
+                (sys_fee, sub_shares)
             }
             _ => (0i64, 0i64),
         }
@@ -249,6 +280,13 @@ impl Transaction {
         Self {
             uid,
             id,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_uid(uid: xid::Id) -> Self {
+        Self {
+            uid,
             ..Default::default()
         }
     }
@@ -286,6 +324,59 @@ impl Transaction {
         }
 
         Ok(select_fields)
+    }
+
+    // do it after transaction commited.
+    pub fn credits(&self) -> Vec<Credit> {
+        let kind = TransactionKind::from_str(&self.kind);
+        if self.status != 3 || self.uid == SYS_ID || kind.is_err() {
+            return Vec::new();
+        }
+
+        let kind = kind.unwrap();
+        let mut logs: Vec<Credit> = Vec::with_capacity(3);
+        match kind {
+            TransactionKind::Expenditure
+            | TransactionKind::Sponsor
+            | TransactionKind::Subscribe => {
+                logs.push(Credit {
+                    uid: self.uid,
+                    txn: self.id,
+                    kind: CreditKind::Expenditure.to_string(),
+                    amount: self.amount,
+                    description: self.description.clone(),
+                    ..Default::default()
+                });
+            }
+            _ => {}
+        }
+
+        match kind {
+            TransactionKind::Sponsor | TransactionKind::Subscribe => {
+                logs.push(Credit {
+                    uid: self.payee,
+                    txn: self.id,
+                    kind: CreditKind::Income.to_string(),
+                    amount: self.amount - self.sys_fee - self.sub_shares,
+                    description: self.description.clone(),
+                    ..Default::default()
+                });
+
+                if self.sub_shares > 0 && self.sub_payee.is_some() {
+                    logs.push(Credit {
+                        uid: self.sub_payee.unwrap(),
+                        txn: self.id,
+                        kind: CreditKind::Income.to_string(),
+                        amount: self.sub_shares,
+                        description: self.description.clone(),
+                        ..Default::default()
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        logs
     }
 
     pub async fn get_one(
@@ -424,6 +515,72 @@ impl Transaction {
         .into())
     }
 
+    // do it after prepared.
+    pub async fn cancel(&mut self, db: &scylladb::ScyllaDB, mac: &HMacTag) -> anyhow::Result<()> {
+        let kind = TransactionKind::from_str(&self.kind)?;
+        if self.status != 1 {
+            return Err(HTTPError::new(
+                429,
+                format!("Invalid status {} for canceling transaction", self.status),
+            )
+            .into());
+        }
+        if self.amount <= 0 {
+            return Err(HTTPError::new(
+                429,
+                format!("Invalid amount {} for canceling transaction", self.amount),
+            )
+            .into());
+        }
+
+        let ok = self.set_status(db, 1, -1).await?;
+        if !ok {
+            if self.status < 0 {
+                // canceling or canceled
+                return Ok(());
+            }
+
+            return Err(HTTPError::new(
+                500,
+                format!("Invalid status {} for canceling transaction", self.status),
+            )
+            .into());
+        }
+
+        let mut ok = false;
+        let mut payer_wallet = Wallet::with_pk(self.uid);
+        for _ in 0..5 {
+            payer_wallet.get_one(db).await?;
+            payer_wallet.verify_checksum(mac)?;
+            kind.rollback_payer_balance(&mut payer_wallet, self.amount)?;
+            payer_wallet.next_checksum(mac, self.id);
+            ok = payer_wallet.update_balance(db).await?;
+            if ok {
+                break;
+            }
+        }
+
+        if ok {
+            self.set_status(db, -1, -2).await?;
+            return Ok(());
+        }
+
+        log::error!(target: "scylladb",
+            action = "cancel_transaction",
+            uid = self.uid.to_string(),
+            id = self.id.to_string(),
+            wallet = payer_wallet.uid.to_string();
+            "payer_wallet canceling failed",
+        );
+
+        Err(HTTPError::new(
+            500,
+            format!("canceling transaction failed: {}, {}", self.uid, self.id),
+        )
+        .into())
+    }
+
+    // do it after prepared.
     pub async fn commit(&mut self, db: &scylladb::ScyllaDB, mac: &HMacTag) -> anyhow::Result<()> {
         let kind = TransactionKind::from_str(&self.kind)?;
         kind.check_payee(self.payee)?;
@@ -453,7 +610,7 @@ impl Transaction {
             let res = payee_wallet.save(db).await?;
             log::info!(target: "scylladb",
                 action = "create_wallet",
-                uid = self.payee.to_string(),
+                uid = payee_wallet.uid.to_string(),
                 txn_uid = self.uid.to_string(),
                 txn_id = self.id.to_string(),
                 txn_kind = self.kind,
@@ -462,84 +619,146 @@ impl Transaction {
             );
         }
 
-        let mut failed: Vec<xid::Id> = Vec::new();
-        let mut ok = false;
-        for _ in 0..3 {
-            payee_wallet.get_one(db).await?;
-            payee_wallet.verify_checksum(mac)?;
-            kind.add_payee_balance(
-                &mut payee_wallet,
-                self.amount - self.sys_fee - self.sub_shares,
-            )?;
-            if payee_wallet.is_system() {
-                payee_wallet.income += self.sys_fee;
-            }
-            payee_wallet.next_checksum(mac, self.id);
-            ok = payee_wallet.update_balance(db).await?;
-            if ok {
-                break;
-            }
-        }
-        if !ok {
-            failed.push(payee_wallet.uid);
-        }
-
-        if self.sys_fee > 0 && !payee_wallet.is_system() {
-            let mut sys_wallet = Wallet::with_pk(SYS_ID);
-            for _ in 0..3 {
-                sys_wallet.get_one(db).await?;
-                sys_wallet.verify_checksum(mac)?;
-                sys_wallet.income += self.sys_fee;
-                sys_wallet.next_checksum(mac, self.id);
-
-                ok = sys_wallet.update_balance(db).await?;
+        let payee_wallet_is_sys = payee_wallet.is_system();
+        let fut_payee: BoxFuture<'_, anyhow::Result<()>> = async {
+            let mut ok = false;
+            for _ in 0..5 {
+                payee_wallet.verify_checksum(mac)?;
+                kind.add_payee_balance(
+                    &mut payee_wallet,
+                    self.amount - self.sys_fee - self.sub_shares,
+                )?;
+                if payee_wallet.is_system() {
+                    payee_wallet.income += self.sys_fee;
+                }
+                payee_wallet.next_checksum(mac, self.id);
+                ok = payee_wallet.update_balance(db).await?;
                 if ok {
                     break;
                 }
+                payee_wallet.get_one(db).await?;
             }
+
             if !ok {
-                failed.push(sys_wallet.uid);
+                log::error!(target: "scylladb",
+                    action = "commit_transaction",
+                    uid = self.uid.to_string(),
+                    id = self.id.to_string(),
+                    wallet = payee_wallet.uid.to_string();
+                    "payee_wallet committing failed",
+                );
+                return Err(anyhow!(
+                    "payee_wallet committing failed, {}",
+                    payee_wallet.uid.to_string()
+                ));
             }
+            Ok(())
         }
+        .boxed();
 
-        if self.sub_shares > 0 {
-            let mut sub_wallet = Wallet::with_pk(self.sub_payee.unwrap());
-            for _ in 0..3 {
-                sub_wallet.get_one(db).await?;
-                sub_wallet.verify_checksum(mac)?;
-                sub_wallet.income += self.sub_shares;
-                sub_wallet.next_checksum(mac, self.id);
+        let fut_sys: BoxFuture<'_, anyhow::Result<()>> = async {
+            if self.sys_fee > 0 && !payee_wallet_is_sys {
+                let mut ok = false;
+                let mut sys_wallet = Wallet::with_pk(SYS_ID);
+                for _ in 0..5 {
+                    sys_wallet.get_one(db).await?;
+                    sys_wallet.verify_checksum(mac)?;
+                    sys_wallet.income += self.sys_fee;
+                    sys_wallet.next_checksum(mac, self.id);
 
-                ok = sub_wallet.update_balance(db).await?;
-                if ok {
-                    break;
+                    ok = sys_wallet.update_balance(db).await?;
+                    if ok {
+                        break;
+                    }
+                }
+
+                if !ok {
+                    log::error!(target: "scylladb",
+                        action = "commit_transaction",
+                        uid = self.uid.to_string(),
+                        id = self.id.to_string(),
+                        wallet = sys_wallet.uid.to_string();
+                        "sys_wallet committing failed",
+                    );
+                    return Err(anyhow!(
+                        "sys_wallet committing failed, {}",
+                        sys_wallet.uid.to_string()
+                    ));
                 }
             }
-            if !ok {
-                failed.push(sub_wallet.uid);
+            Ok(())
+        }
+        .boxed();
+
+        let fut_sub: BoxFuture<'_, anyhow::Result<()>> = async {
+            if self.sub_shares > 0 {
+                let mut ok = false;
+                let mut sub_wallet = Wallet::with_pk(self.sub_payee.unwrap());
+                let res = sub_wallet.get_one(db).await;
+                if res.is_err() {
+                    // create payee wallet if not exists
+                    let res = sub_wallet.save(db).await?;
+                    log::info!(target: "scylladb",
+                        action = "create_wallet",
+                        uid = sub_wallet.uid.to_string(),
+                        txn_uid = self.uid.to_string(),
+                        txn_id = self.id.to_string(),
+                        txn_kind = self.kind,
+                        result = res;
+                        "",
+                    );
+                }
+
+                for _ in 0..5 {
+                    sub_wallet.verify_checksum(mac)?;
+                    sub_wallet.income += self.sub_shares;
+                    sub_wallet.next_checksum(mac, self.id);
+
+                    ok = sub_wallet.update_balance(db).await?;
+                    if ok {
+                        break;
+                    }
+                    sub_wallet.get_one(db).await?;
+                }
+
+                if !ok {
+                    log::error!(target: "scylladb",
+                        action = "commit_transaction",
+                        uid = self.uid.to_string(),
+                        id = self.id.to_string(),
+                        wallet = sub_wallet.uid.to_string();
+                        "sub_wallet committing failed",
+                    );
+                    return Err(anyhow!(
+                        "sub_wallet committing failed, {}",
+                        sub_wallet.uid.to_string()
+                    ));
+                }
             }
+            Ok(())
+        }
+        .boxed();
+
+        let (a, b, c) = join!(fut_payee, fut_sys, fut_sub);
+        let mut errs: Vec<String> = Vec::new();
+        if a.is_err() {
+            errs.push(a.unwrap_err().to_string());
+        }
+        if b.is_err() {
+            errs.push(b.unwrap_err().to_string());
+        }
+        if c.is_err() {
+            errs.push(c.unwrap_err().to_string());
         }
 
-        if failed.is_empty() {
+        if errs.is_empty() {
             self.set_status(db, 2, 3).await?;
             return Ok(());
         }
 
-        let failed = failed.iter().map(|id| id.to_string()).collect::<Vec<_>>();
-        log::error!(target: "scylladb",
-            action = "commit_transaction",
-            uid = self.uid.to_string(),
-            id = self.id.to_string(),
-            kv = log::as_serde!(failed);
-            "partly applied",
-        );
-
         Err(HTTPError::new(
             500,
-            format!(
-                "committing transaction partly applied, failed: {:?}",
-                failed
-            ),
+            format!("committing transaction partly applied, errors: {:?}", errs),
         )
         .into())
     }
@@ -550,7 +769,7 @@ impl Transaction {
         select_fields: Vec<String>,
         page_size: u16,
         page_token: Option<xid::Id>,
-        kind: Option<String>,
+        kind: Option<TransactionKind>,
     ) -> anyhow::Result<Vec<Self>> {
         let fields = Self::select_fields(select_fields, true)?;
 
@@ -566,7 +785,12 @@ impl Transaction {
                 let query = format!(
                     "SELECT {} FROM transaction WHERE uid=? AND kind=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                     fields.clone().join(","));
-                let params = (uid.to_cql(), id.to_cql(), kind.unwrap(), page_size as i32);
+                let params = (
+                    uid.to_cql(),
+                    id.to_cql(),
+                    kind.unwrap().to_string(),
+                    page_size as i32,
+                );
                 db.execute_iter(query, params).await?
             }
         } else if kind.is_none() {
@@ -583,7 +807,7 @@ impl Transaction {
                 fields.clone().join(",")
             ))
             .with_page_size(page_size as i32);
-            let params = (uid.as_bytes(), kind.unwrap(), page_size as i32);
+            let params = (uid.as_bytes(), kind.unwrap().to_string(), page_size as i32);
             db.execute_iter(query, params).await?
         };
 
@@ -606,7 +830,7 @@ impl Transaction {
         select_fields: Vec<String>,
         page_size: u16,
         page_token: Option<xid::Id>,
-        kind: Option<String>,
+        kind: Option<TransactionKind>,
     ) -> anyhow::Result<Vec<Self>> {
         let fields = Self::select_fields(select_fields, true)?;
 
@@ -622,7 +846,12 @@ impl Transaction {
                 let query = format!(
                     "SELECT {} FROM transaction WHERE payee=? AND id<? AND kind=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                     fields.clone().join(","));
-                let params = (payee.to_cql(), id.to_cql(), kind.unwrap(), page_size as i32);
+                let params = (
+                    payee.to_cql(),
+                    id.to_cql(),
+                    kind.unwrap().to_string(),
+                    page_size as i32,
+                );
                 db.execute_iter(query, params).await?
             }
         } else if kind.is_none() {
@@ -639,7 +868,11 @@ impl Transaction {
                 fields.clone().join(",")
             ))
             .with_page_size(page_size as i32);
-            let params = (payee.as_bytes(), kind.unwrap(), page_size as i32);
+            let params = (
+                payee.as_bytes(),
+                kind.unwrap().to_string(),
+                page_size as i32,
+            );
             db.execute_iter(query, params).await?
         };
 
@@ -830,6 +1063,40 @@ mod tests {
             assert_eq!(0, wallet.balance());
         }
 
+        // rollback_payer_balance
+        {
+            let mut wallet = Wallet::with_pk(xid::new());
+            assert!(TransactionKind::Award
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(1, wallet.award);
+            assert!(TransactionKind::Topup
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(1, wallet.topup);
+            assert!(TransactionKind::Refund
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(2, wallet.topup);
+            assert!(TransactionKind::Withdraw
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(1, wallet.income);
+
+            assert!(TransactionKind::Expenditure
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(3, wallet.topup);
+            assert!(TransactionKind::Sponsor
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(4, wallet.topup);
+            assert!(TransactionKind::Subscribe
+                .rollback_payer_balance(&mut wallet, 1)
+                .is_ok());
+            assert_eq!(5, wallet.topup);
+        }
+
         // add_payee_balance
         {
             let mut wallet = Wallet::with_pk(xid::new());
@@ -986,6 +1253,7 @@ mod tests {
             assert!(res.unwrap_err().to_string().contains("Invalid sub_payee"));
         }
 
+        // prepare and commit
         {
             let mut payee_wallet = Wallet::with_pk(payee);
             assert!(payee_wallet.get_one(&db).await.is_err());
@@ -999,6 +1267,8 @@ mod tests {
             txn.prepare(&db, &mac, payee, TransactionKind::Award, 100)
                 .await
                 .unwrap();
+            assert_eq!(1, txn.status);
+            assert!(txn.credits().is_empty());
 
             sys_wallet.get_one(&db).await.unwrap();
             sys_wallet.verify_checksum(&mac).unwrap();
@@ -1019,10 +1289,225 @@ mod tests {
 
             txn.commit(&db, &mac).await.unwrap();
             assert_eq!(3, txn.status);
+            assert!(txn.credits().is_empty());
             assert!(payee_wallet.get_one(&db).await.is_ok());
             assert_eq!(100, payee_wallet.award);
             assert_eq!(100, payee_wallet.balance());
             assert_eq!(1, payee_wallet.sequence);
+        }
+
+        // prepare and cancel
+        {
+            let mut payer_wallet = Wallet::with_pk(xid::new());
+            assert!(payer_wallet.get_one(&db).await.is_err());
+
+            sys_wallet.get_one(&db).await.unwrap();
+            sys_wallet.verify_checksum(&mac).unwrap();
+
+            let mut txn: Transaction = Transaction::with_uid(SYS_ID);
+            txn.prepare(&db, &mac, payer_wallet.uid, TransactionKind::Award, 1000)
+                .await
+                .unwrap();
+            txn.commit(&db, &mac).await.unwrap();
+            assert!(payer_wallet.get_one(&db).await.is_ok());
+            assert_eq!(1000, payer_wallet.award);
+            assert_eq!(1000, payer_wallet.balance());
+            assert_eq!(1, payer_wallet.sequence);
+
+            let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn.kind = "award".to_string();
+            let res = txn.cancel(&db, &mac).await;
+            assert!(res.is_err());
+            assert!(res.unwrap_err().to_string().contains("Invalid status 0"));
+
+            txn.status = 1;
+            let res = txn.cancel(&db, &mac).await;
+            assert!(res.is_err());
+            assert!(res.unwrap_err().to_string().contains("Invalid amount 0"));
+
+            let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 400)
+                .await
+                .unwrap();
+
+            payer_wallet.get_one(&db).await.unwrap();
+            payer_wallet.verify_checksum(&mac).unwrap();
+            assert_eq!(600, payer_wallet.award);
+            assert_eq!(0, payer_wallet.topup);
+            assert_eq!(2, payer_wallet.sequence);
+            assert_eq!(txn.id, payer_wallet.txn);
+            assert_eq!(1, txn.status);
+
+            txn.cancel(&db, &mac).await.unwrap();
+            assert_eq!(-2, txn.status);
+
+            payer_wallet.get_one(&db).await.unwrap();
+            payer_wallet.verify_checksum(&mac).unwrap();
+            assert_eq!(600, payer_wallet.award);
+            assert_eq!(400, payer_wallet.topup);
+            assert_eq!(3, payer_wallet.sequence);
+            assert_eq!(txn.id, payer_wallet.txn);
+
+            txn.get_one(&db, vec![]).await.unwrap();
+            assert_eq!(-2, txn.status);
+
+            let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 100)
+                .await
+                .unwrap();
+            txn.commit(&db, &mac).await.unwrap();
+            payer_wallet.get_one(&db).await.unwrap();
+            payer_wallet.verify_checksum(&mac).unwrap();
+            assert_eq!(500, payer_wallet.award);
+            assert_eq!(400, payer_wallet.topup);
+            assert_eq!(4, payer_wallet.sequence);
+            assert_eq!(txn.id, payer_wallet.txn);
+            assert_eq!(3, txn.status);
+
+            let mut txn1: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn1.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 600)
+                .await
+                .unwrap();
+            payer_wallet.get_one(&db).await.unwrap();
+            payer_wallet.verify_checksum(&mac).unwrap();
+            assert_eq!(0, payer_wallet.award);
+            assert_eq!(300, payer_wallet.topup);
+            assert_eq!(5, payer_wallet.sequence);
+            assert_eq!(txn1.id, payer_wallet.txn);
+            assert_eq!(1, txn1.status);
+
+            let mut txn2: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn2.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 100)
+                .await
+                .unwrap();
+            txn2.commit(&db, &mac).await.unwrap();
+            payer_wallet.get_one(&db).await.unwrap();
+            payer_wallet.verify_checksum(&mac).unwrap();
+            assert_eq!(0, payer_wallet.award);
+            assert_eq!(200, payer_wallet.topup);
+            assert_eq!(6, payer_wallet.sequence);
+            assert_eq!(txn2.id, payer_wallet.txn);
+            assert_eq!(3, txn2.status);
+
+            txn1.cancel(&db, &mac).await.unwrap();
+            assert_eq!(-2, txn1.status);
+
+            payer_wallet.get_one(&db).await.unwrap();
+            payer_wallet.verify_checksum(&mac).unwrap();
+            assert_eq!(0, payer_wallet.award);
+            assert_eq!(800, payer_wallet.topup);
+            assert_eq!(7, payer_wallet.sequence);
+            assert_eq!(txn1.id, payer_wallet.txn);
+
+            txn1.get_one(&db, vec![]).await.unwrap();
+            assert_eq!(-2, txn1.status);
+        }
+
+        // commit and credits
+        {
+            let mut payer_wallet = Wallet::with_pk(xid::new());
+            let mut payee_wallet = Wallet::with_pk(xid::new());
+            let mut sub_payee_wallet = Wallet::with_pk(xid::new());
+            assert!(payer_wallet.get_one(&db).await.is_err());
+            assert!(payee_wallet.get_one(&db).await.is_err());
+            assert!(sub_payee_wallet.get_one(&db).await.is_err());
+
+            sys_wallet.get_one(&db).await.unwrap();
+            sys_wallet.verify_checksum(&mac).unwrap();
+
+            let mut txn: Transaction = Default::default();
+            txn.prepare(&db, &mac, payer_wallet.uid, TransactionKind::Award, 1000)
+                .await
+                .unwrap();
+            txn.commit(&db, &mac).await.unwrap();
+            assert!(txn.credits().is_empty());
+
+            let mut credit = Credit::with_pk(payer_wallet.uid, txn.id);
+            credit.kind = CreditKind::Init.to_string();
+            credit.amount = 1000; // will be ignored.
+            credit.save(&db).await.unwrap();
+
+            assert!(payer_wallet.get_one(&db).await.is_ok());
+            assert_eq!(1000, payer_wallet.award);
+            assert_eq!(1000, payer_wallet.balance());
+            assert_eq!(10, payer_wallet.credits);
+            assert_eq!(1, payer_wallet.sequence);
+
+            let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn.prepare(&db, &mac, payee_wallet.uid, TransactionKind::Sponsor, 100)
+                .await
+                .unwrap();
+            txn.commit(&db, &mac).await.unwrap();
+
+            let mut credits = txn.credits();
+            assert_eq!(2, credits.len());
+            assert_eq!(100, credits[0].amount);
+            assert_eq!("expenditure", credits[0].kind);
+            assert_eq!(70, credits[1].amount);
+            assert_eq!("income", credits[1].kind);
+            Credit::save_all(&db, &mut credits).await.unwrap();
+
+            assert!(payer_wallet.get_one(&db).await.is_ok());
+            assert_eq!(900, payer_wallet.award);
+            assert_eq!(900, payer_wallet.balance());
+            assert_eq!(110, payer_wallet.credits);
+            assert_eq!(2, payer_wallet.sequence);
+
+            assert!(payee_wallet.get_one(&db).await.is_ok());
+            assert_eq!(70, payee_wallet.income);
+            assert_eq!(70, payee_wallet.balance());
+            assert_eq!(0, payee_wallet.credits);
+            assert_eq!(1, payee_wallet.sequence);
+
+            let mut credit = Credit::with_pk(payee_wallet.uid, txn.id);
+            credit.kind = CreditKind::Init.to_string();
+            credit.amount = 1000; // will be ignored.
+            credit.save(&db).await.unwrap();
+            assert!(payee_wallet.get_one(&db).await.is_ok());
+            assert_eq!(70, payee_wallet.income);
+            assert_eq!(70, payee_wallet.balance());
+            assert_eq!(10, payee_wallet.credits);
+            assert_eq!(1, payee_wallet.sequence);
+
+            let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
+            txn.sub_payee = Some(sub_payee_wallet.uid);
+            txn.prepare(&db, &mac, payee_wallet.uid, TransactionKind::Subscribe, 200)
+                .await
+                .unwrap();
+            txn.commit(&db, &mac).await.unwrap();
+
+            let mut credit = Credit::with_pk(sub_payee_wallet.uid, xid::new());
+            credit.kind = CreditKind::Init.to_string();
+            credit.amount = 1; // will be ignored.
+            credit.save(&db).await.unwrap();
+
+            let mut credits = txn.credits();
+            assert_eq!(3, credits.len());
+            assert_eq!(200, credits[0].amount);
+            assert_eq!("expenditure", credits[0].kind);
+            assert_eq!(70, credits[1].amount);
+            assert_eq!("income", credits[1].kind);
+            assert_eq!(70, credits[2].amount);
+            assert_eq!("income", credits[2].kind);
+            Credit::save_all(&db, &mut credits).await.unwrap();
+
+            assert!(payer_wallet.get_one(&db).await.is_ok());
+            assert_eq!(700, payer_wallet.award);
+            assert_eq!(700, payer_wallet.balance());
+            assert_eq!(310, payer_wallet.credits);
+            assert_eq!(3, payer_wallet.sequence);
+
+            assert!(payee_wallet.get_one(&db).await.is_ok());
+            assert_eq!(140, payee_wallet.income);
+            assert_eq!(140, payee_wallet.balance());
+            assert_eq!(80, payee_wallet.credits);
+            assert_eq!(2, payee_wallet.sequence);
+
+            assert!(sub_payee_wallet.get_one(&db).await.is_ok());
+            assert_eq!(70, sub_payee_wallet.income);
+            assert_eq!(70, sub_payee_wallet.balance());
+            assert_eq!(80, sub_payee_wallet.credits);
+            assert_eq!(1, sub_payee_wallet.sequence);
         }
     }
 }

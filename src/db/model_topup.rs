@@ -1,12 +1,7 @@
-use std::collections::HashSet;
-use std::str::FromStr;
-use strum_macros::{AsRefStr, EnumString};
-
 use axum_web::{context::unix_ms, erring::HTTPError};
 use scylla_orm::{ColumnsMap, CqlValue, ToCqlVal};
 use scylla_orm_macros::CqlOrm;
 
-use super::{Wallet, SYS_ID};
 use crate::db::scylladb::{self, extract_applied};
 
 #[derive(Debug, Default, Clone, CqlOrm)]

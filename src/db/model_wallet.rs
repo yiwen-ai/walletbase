@@ -59,11 +59,9 @@ impl Wallet {
         }
         let tag = mac.tag64(self);
         if tag.ct_eq(&self.checksum).unwrap_u8() != 1 {
-            return Err(HTTPError::new(
-                400,
-                format!("wallet {} checksum mismatch", self.uid.to_string()),
-            )
-            .into());
+            return Err(
+                HTTPError::new(400, format!("wallet {} checksum mismatch", self.uid)).into(),
+            );
         }
         Ok(())
     }
@@ -151,12 +149,12 @@ impl HMacTag {
         let digest = self
             .hmac
             .clone()
-            .chain_update(&wallet.uid.as_bytes())
-            .chain_update(&wallet.sequence.to_be_bytes())
-            .chain_update(&wallet.award.to_be_bytes())
-            .chain_update(&wallet.topup.to_be_bytes())
-            .chain_update(&wallet.income.to_be_bytes())
-            .chain_update(&wallet.txn.as_bytes())
+            .chain_update(wallet.uid.as_bytes())
+            .chain_update(wallet.sequence.to_be_bytes())
+            .chain_update(wallet.award.to_be_bytes())
+            .chain_update(wallet.topup.to_be_bytes())
+            .chain_update(wallet.income.to_be_bytes())
+            .chain_update(wallet.txn.as_bytes())
             .finalize()
             .into_bytes();
 
@@ -204,7 +202,7 @@ mod tests {
         let mac = HMacTag::new([1u8; 32]);
         let mut wallet: Wallet = Default::default();
 
-        assert_eq!(true, wallet.is_system());
+        assert!(wallet.is_system());
         assert_eq!(0, wallet.balance());
         assert!(wallet.verify_checksum(&mac).is_ok());
 

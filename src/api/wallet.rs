@@ -3,16 +3,16 @@ use axum::{
     Extension,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, sync::Arc};
+use std::sync::Arc;
 use validator::Validate;
 
-use axum_web::context::{unix_ms, ReqContext};
+use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::PackObject;
 
 use crate::db;
 
-use crate::api::{get_fields, token_from_xid, token_to_xid, AppState, Pagination};
+use crate::api::AppState;
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct WalletOutput {
@@ -26,16 +26,14 @@ pub struct WalletOutput {
 
 impl WalletOutput {
     pub fn from<T>(val: db::Wallet, to: &PackObject<T>) -> Self {
-        let mut rt = Self {
+        Self {
             uid: to.with(val.uid),
             sequence: val.sequence,
             award: val.award,
             topup: val.topup,
             income: val.income,
             credits: val.credits,
-        };
-
-        rt
+        }
     }
 }
 
