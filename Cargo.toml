@@ -1,0 +1,107 @@
+[package]
+name = "walletbase"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.64"
+description = ""
+publish = false
+repository = "https://github.com/yiwen-ai/walletbase"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.6", features = [
+  "headers",
+  "http1",
+  "http2",
+  "json",
+  "macros",
+  "matched-path",
+  "tokio",
+  "query",
+], default-features = true }
+bytes = "1"
+base64 = "0.21"
+ciborium = "0.2"
+ciborium-io = "0.2"
+isolang = { git = "https://github.com/yiwen-ai/isolang-rs.git", branch = "master", features = [
+  "english_names",
+  "lowercase_names",
+  "local_names",
+  "list_languages",
+] }
+libflate = "1"
+log = "0.4"
+mime = "0.3"
+scylla = "0.9"
+serde = "1"
+serde_json = { version = "1.0", features = ["preserve_order"] }
+structured-logger = "1.0"
+tokio = { version = "1.28", features = [
+  "fs",
+  "io-util",
+  "io-std",
+  "macros",
+  "net",
+  "parking_lot",
+  "process",
+  "rt",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+], default-features = true }
+uuid = { version = "1", features = ["fast-rng", "v4", "v8"] }
+validator = { version = "0.16", features = ["derive", "phone"] }
+xid = { git = "https://github.com/yiwen-ai/xid-rs.git", tag = "v1.1.0" }
+zstd = "0.12"
+
+[dependencies]
+axum-web = { path = "crates/axum-web" }
+scylla-orm = { path = "crates/scylla-orm" }
+scylla-orm-macros = { path = "crates/scylla-orm-macros" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }
+base64 = { workspace = true }
+ciborium = { workspace = true }
+ciborium-io = { workspace = true }
+config = "0.13"
+libflate = { workspace = true }
+log = { workspace = true }
+mime = { workspace = true }
+scylla = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+structured-logger = { workspace = true }
+tokio = { workspace = true }
+tower = "0.4"
+tower-http = { version = "0.4", features = [
+  "catch-panic",
+  "compression-gzip",
+  "compression-zstd",
+  "decompression-gzip",
+  "decompression-zstd",
+  "propagate-header",
+] }
+uuid = { workspace = true }
+validator = { workspace = true }
+xid = { workspace = true }
+zstd = { workspace = true }
+futures-util = "0.3"
+hyper = "0.14"
+futures = "0.3"
+strum = "0.25"
+strum_macros = "0.25"
+hmac = "0.12"
+sha3 = "0.10"
+subtle = "2.5"
+
+[profile.release]
+lto = true

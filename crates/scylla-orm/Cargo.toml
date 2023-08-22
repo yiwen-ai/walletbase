@@ -1,0 +1,22 @@
+[package]
+name = "scylla-orm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.64"
+description = ""
+publish = false
+repository = "https://github.com/yiwen-ai/walletbase"
+license = "MIT OR Apache-2.0"
+
+[lib]
+
+[dependencies]
+scylla = { workspace = true }
+isolang = { workspace = true }
+xid = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+ciborium = "0.2"
+serde = "1.0"

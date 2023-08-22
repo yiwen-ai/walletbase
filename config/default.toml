@@ -1,0 +1,23 @@
+env = "test" # "test", "dev", "prod"
+
+[log]
+# Log level: "trace", "debug", "info", "warn", "error"
+level = "info"
+
+[server]
+# The address to bind to.
+port = 8080
+# cert file path to enable https, example: "/etc/https/mydomain.crt"
+cert_file = ""
+# key file path to enable https, example: "/etc/https/mydomain.key"
+key_file = ""
+# The maximum number of seconds to wait for graceful shutdown.
+graceful_shutdown = 60
+
+[scylla]
+# Scylla server nodes
+nodes = ["127.0.0.1:9042"]
+# Scylla server username
+username = ""
+# Scylla server password
+password = ""
