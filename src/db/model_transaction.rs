@@ -485,9 +485,14 @@ impl Transaction {
         let cols = self.to();
 
         for field in &fields {
+            let val = cols.get(field).unwrap();
+            if val == &CqlValue::Empty {
+                continue;
+            }
+
             cols_name.push(field);
             vals_name.push("?");
-            insert_params.push(cols.get(field).unwrap());
+            insert_params.push(val);
         }
 
         let insert_query = format!(
@@ -870,6 +875,71 @@ impl Transaction {
             .with_page_size(page_size as i32);
             let params = (
                 payee.as_bytes(),
+                kind.unwrap().to_string(),
+                page_size as i32,
+            );
+            db.execute_iter(query, params).await?
+        };
+
+        let mut res: Vec<Self> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut doc = Self::default();
+            let mut cols = ColumnsMap::with_capacity(fields.len());
+            cols.fill(row, &fields)?;
+            doc.fill(&cols);
+            doc._fields = fields.clone();
+            res.push(doc);
+        }
+
+        Ok(res)
+    }
+
+    pub async fn list_by_sub_payee(
+        db: &scylladb::ScyllaDB,
+        sub_payee: xid::Id,
+        select_fields: Vec<String>,
+        page_size: u16,
+        page_token: Option<xid::Id>,
+        kind: Option<TransactionKind>,
+    ) -> anyhow::Result<Vec<Self>> {
+        let fields = Self::select_fields(select_fields, true)?;
+
+        let rows = if let Some(id) = page_token {
+            if kind.is_none() {
+                let query = format!(
+                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                    fields.clone().join(",")
+                );
+                let params = (sub_payee.to_cql(), id.to_cql(), page_size as i32);
+                db.execute_iter(query, params).await?
+            } else {
+                let query = format!(
+                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? AND kind=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                    fields.clone().join(","));
+                let params = (
+                    sub_payee.to_cql(),
+                    id.to_cql(),
+                    kind.unwrap().to_string(),
+                    page_size as i32,
+                );
+                db.execute_iter(query, params).await?
+            }
+        } else if kind.is_none() {
+            let query = scylladb::Query::new(format!(
+                "SELECT {} FROM transaction WHERE sub_payee=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                fields.clone().join(",")
+            ))
+            .with_page_size(page_size as i32);
+            let params = (sub_payee.to_cql(), page_size as i32);
+            db.execute_iter(query, params).await?
+        } else {
+            let query = scylladb::Query::new(format!(
+                "SELECT {} FROM transaction WHERE sub_payee=? AND kind=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                fields.clone().join(",")
+            ))
+            .with_page_size(page_size as i32);
+            let params = (
+                sub_payee.as_bytes(),
                 kind.unwrap().to_string(),
                 page_size as i32,
             );
@@ -1423,8 +1493,8 @@ mod tests {
             assert!(txn.credits().is_empty());
 
             let mut credit = Credit::with_pk(payer_wallet.uid, txn.id);
-            credit.kind = CreditKind::Init.to_string();
-            credit.amount = 1000; // will be ignored.
+            credit.kind = CreditKind::Award.to_string();
+            credit.amount = 10; // will be ignored.
             credit.save(&db).await.unwrap();
 
             assert!(payer_wallet.get_one(&db).await.is_ok());
@@ -1460,8 +1530,8 @@ mod tests {
             assert_eq!(1, payee_wallet.sequence);
 
             let mut credit = Credit::with_pk(payee_wallet.uid, txn.id);
-            credit.kind = CreditKind::Init.to_string();
-            credit.amount = 1000; // will be ignored.
+            credit.kind = CreditKind::Award.to_string();
+            credit.amount = 10;
             credit.save(&db).await.unwrap();
             assert!(payee_wallet.get_one(&db).await.is_ok());
             assert_eq!(70, payee_wallet.income);
@@ -1477,7 +1547,7 @@ mod tests {
             txn.commit(&db, &mac).await.unwrap();
 
             let mut credit = Credit::with_pk(sub_payee_wallet.uid, xid::new());
-            credit.kind = CreditKind::Init.to_string();
+            credit.kind = CreditKind::Award.to_string();
             credit.amount = 1; // will be ignored.
             credit.save(&db).await.unwrap();
 
@@ -1506,7 +1576,7 @@ mod tests {
             assert!(sub_payee_wallet.get_one(&db).await.is_ok());
             assert_eq!(70, sub_payee_wallet.income);
             assert_eq!(70, sub_payee_wallet.balance());
-            assert_eq!(80, sub_payee_wallet.credits);
+            assert_eq!(71, sub_payee_wallet.credits);
             assert_eq!(1, sub_payee_wallet.sequence);
         }
     }

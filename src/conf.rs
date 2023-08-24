@@ -22,11 +22,19 @@ pub struct ScyllaDB {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct Keys {
+    pub aad: String,
+    pub kek: String,
+    pub wallet_key_file: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Conf {
     pub env: String,
     pub log: Log,
     pub server: Server,
     pub scylla: ScyllaDB,
+    pub keys: Keys,
 }
 
 impl Conf {

@@ -102,6 +102,11 @@ strum_macros = "0.25"
 hmac = "0.12"
 sha3 = "0.10"
 subtle = "2.5"
+coset = { git = "https://github.com/yiwen-ai/coset.git", branch = "yiwen" }
+ed25519-dalek = "2.0.0"
+rand_core = { version = "0.6", features = ["getrandom", "alloc"] }
+base64ct = { version = "1.6", features = ["alloc"] }
+aes-gcm = "0.10"
 
 [profile.release]
 lto = true

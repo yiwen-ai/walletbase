@@ -11,42 +11,43 @@ use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::PackObject;
 
 use crate::db;
-
-use crate::api::AppState;
+use crate::{
+    api::{AppState, QueryUid},
+    db::SYS_ID,
+};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct WalletOutput {
-    pub uid: PackObject<xid::Id>,
     pub sequence: i64,
     pub award: i64,
     pub topup: i64,
     pub income: i64,
     pub credits: i64,
+    pub txn: Option<PackObject<xid::Id>>,
 }
 
 impl WalletOutput {
     pub fn from<T>(val: db::Wallet, to: &PackObject<T>) -> Self {
         Self {
-            uid: to.with(val.uid),
             sequence: val.sequence,
             award: val.award,
             topup: val.topup,
             income: val.income,
             credits: val.credits,
+            txn: if val.txn.is_zero() {
+                None
+            } else {
+                Some(to.with(val.txn))
+            },
         }
     }
-}
-
-#[derive(Debug, Deserialize, Validate)]
-pub struct QueryWallet {
-    pub uid: PackObject<xid::Id>,
 }
 
 pub async fn get(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
     to: PackObject<()>,
-    Query(input): Query<QueryWallet>,
+    Query(input): Query<QueryUid>,
 ) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
     input.validate()?;
 
@@ -57,174 +58,229 @@ pub async fn get(
     .await;
 
     let mut doc = db::Wallet::with_pk(input.uid.unwrap());
-    doc.get_one(&app.scylla).await?;
+    let res = doc.get_one(&app.scylla).await;
+    ctx.set("exists", res.is_ok().into()).await;
 
     Ok(to.with(SuccessResponse::new(WalletOutput::from(doc, &to))))
 }
 
-// #[derive(Debug, Deserialize, Validate)]
-// pub struct CreateTaskInput {
-//     pub uid: PackObject<xid::Id>,
-//     pub gid: PackObject<xid::Id>,
-//     pub kind: String,
-//     #[validate(range(min = 0, max = 256))]
-//     pub threshold: i16,
-//     #[validate(length(min = 0, max = 4))]
-//     pub approvers: Vec<PackObject<xid::Id>>,
-//     #[validate(length(min = 0, max = 256))]
-//     pub assignees: Vec<PackObject<xid::Id>>,
-//     pub message: String,
-//     pub payload: PackObject<Vec<u8>>,
-//     #[validate(range(min = -1, max = 2))]
-//     pub group_role: Option<i8>,
-// }
+#[derive(Debug, Deserialize, Validate)]
+pub struct AwardInput {
+    pub payee: PackObject<xid::Id>,
+    #[validate(range(min = 1, max = 1000000))]
+    pub amount: i64,
+    #[validate(range(min = 1, max = 1000000))]
+    pub credits: Option<i64>,
+    pub description: Option<String>,
+    pub payload: Option<PackObject<Vec<u8>>>,
+}
 
-// pub async fn create(
-//     State(app): State<Arc<AppState>>,
-//     Extension(ctx): Extension<Arc<ReqContext>>,
-//     to: PackObject<CreateTaskInput>,
-// ) -> Result<PackObject<SuccessResponse<TaskOutput>>, HTTPError> {
-//     let (to, input) = to.unpack();
-//     input.validate()?;
+// the txn is committed.
+// returns payee's wallet
+pub async fn award(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<AwardInput>,
+) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
 
-//     ctx.set_kvs(vec![
-//         ("action", "create_task".into()),
-//         ("uid", input.uid.to_string().into()),
-//         ("gid", input.gid.to_string().into()),
-//         ("kind", input.kind.clone().into()),
-//     ])
-//     .await;
+    let payee = input.payee.unwrap();
+    ctx.set_kvs(vec![
+        ("action", "award".into()),
+        ("payee", payee.to_string().into()),
+        ("amount", input.amount.into()),
+    ])
+    .await;
 
-//     let mut doc = db::Task::with_pk(input.uid.unwrap(), xid::new());
-//     doc.gid = input.gid.unwrap();
-//     doc.status = 0i8;
-//     doc.kind = input.kind;
-//     doc.created_at = unix_ms() as i64;
-//     doc.updated_at = doc.created_at;
-//     doc.threshold = input.threshold;
-//     doc.approvers = input.approvers.into_iter().map(|id| id.unwrap()).collect();
-//     doc.assignees = input.assignees.into_iter().map(|id| id.unwrap()).collect();
-//     doc.resolved = HashSet::new();
-//     doc.rejected = HashSet::new();
-//     doc.message = input.message;
-//     doc.payload = input.payload.unwrap();
+    let mut txn: db::Transaction = Default::default();
+    if let Some(description) = input.description {
+        txn.description = description;
+    }
+    if let Some(payload) = input.payload {
+        txn.payload = payload.unwrap();
+    }
 
-//     doc.save(&app.scylla).await?;
+    txn.prepare(
+        &app.scylla,
+        &app.mac,
+        payee,
+        db::TransactionKind::Award,
+        input.amount,
+    )
+    .await?;
+    txn.commit(&app.scylla, &app.mac).await?;
 
-//     if let Some(role) = input.group_role {
-//         let mut notif = db::GroupNotification::with_pk(doc.gid, doc.id, doc.uid);
-//         notif.role = role;
-//         let _ = notif.save(&app.scylla).await;
-//     }
-//     if !doc.approvers.is_empty() {
-//         for id in &doc.approvers {
-//             let mut notif = db::Notification::with_pk(*id, doc.id, doc.uid);
-//             let _ = notif.save(&app.scylla).await;
-//         }
-//     }
-//     if !doc.assignees.is_empty() {
-//         for id in &doc.assignees {
-//             let mut notif = db::Notification::with_pk(*id, doc.id, doc.uid);
-//             let _ = notif.save(&app.scylla).await;
-//         }
-//     }
+    if let Some(amount) = input.credits {
+        let mut credit = db::Credit::with_pk(payee, txn.id);
+        credit.kind = db::CreditKind::Award.to_string();
+        credit.amount = amount;
+        credit.save(&app.scylla).await?;
+        ctx.set("credits", amount.into()).await;
+    }
 
-//     Ok(to.with(SuccessResponse::new(TaskOutput::from(doc, &to))))
-// }
+    let mut wallet = db::Wallet::with_pk(payee);
+    wallet.get_one(&app.scylla).await?;
+    wallet.txn = txn.id; // txn.id may be not the walllet.txn, return the txn.id to the caller
+    Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
+}
 
-// #[derive(Debug, Deserialize, Validate)]
-// pub struct AckTaskInput {
-//     pub uid: PackObject<xid::Id>,
-//     pub tid: PackObject<xid::Id>,
-//     pub sender: PackObject<xid::Id>,
-//     #[validate(range(min = -1, max = 1))]
-//     pub status: i8,
-//     pub message: String,
-// }
+#[derive(Debug, Deserialize, Validate)]
+pub struct ExpendInput {
+    pub uid: PackObject<xid::Id>,
+    pub payee: Option<PackObject<xid::Id>>,
+    pub sub_payee: Option<PackObject<xid::Id>>,
+    #[validate(range(min = 1, max = 1000000))]
+    pub amount: i64,
+    pub description: Option<String>,
+    pub payload: Option<PackObject<Vec<u8>>>,
+}
 
-// pub async fn ack(
-//     State(app): State<Arc<AppState>>,
-//     Extension(ctx): Extension<Arc<ReqContext>>,
-//     to: PackObject<AckTaskInput>,
-// ) -> Result<PackObject<SuccessResponse<bool>>, HTTPError> {
-//     let (to, input) = to.unpack();
-//     input.validate()?;
+// the txn is not committed, it should be committed or cancelled by the caller
+// returns payer's wallet
+pub async fn expend(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<ExpendInput>,
+) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
 
-//     if input.status != -1 && input.status != 1 {
-//         return Err(HTTPError::new(
-//             400,
-//             format!("invalid status, expected -1 or 1, got {}", input.status),
-//         ));
-//     }
-//     ctx.set_kvs(vec![
-//         ("action", "ack_task".into()),
-//         ("uid", input.uid.to_string().into()),
-//         ("tid", input.tid.to_string().into()),
-//         ("sender", input.sender.to_string().into()),
-//     ])
-//     .await;
+    let uid = input.uid.unwrap();
+    ctx.set_kvs(vec![
+        ("action", "expend".into()),
+        ("payer", uid.to_string().into()),
+        ("amount", input.amount.into()),
+    ])
+    .await;
 
-//     let mut doc = db::Notification::with_pk(
-//         input.uid.unwrap(),
-//         input.tid.unwrap(),
-//         input.sender.unwrap(),
-//     );
-//     doc.get_one(&app.scylla).await?;
-//     if doc.status == input.status {
-//         return Ok(to.with(SuccessResponse::new(false)));
-//     }
+    let mut txn = db::Transaction::with_uid(uid);
+    if let Some(description) = input.description {
+        txn.description = description;
+    }
+    if let Some(payload) = input.payload {
+        txn.payload = payload.unwrap();
+    }
 
-//     let mut task = db::Task::with_pk(doc.sender, doc.tid);
-//     if input.status == 1 {
-//         task.update_resolved(&app.scylla, doc.uid).await?;
-//     } else {
-//         task.update_rejected(&app.scylla, doc.uid).await?;
-//     }
-//     doc.status = input.status;
-//     doc.message = input.message;
-//     doc.update(&app.scylla).await?;
+    txn.prepare(
+        &app.scylla,
+        &app.mac,
+        SYS_ID,
+        db::TransactionKind::Expenditure,
+        input.amount,
+    )
+    .await?;
 
-//     Ok(to.with(SuccessResponse::new(true)))
-// }
+    let mut wallet = db::Wallet::with_pk(uid);
+    wallet.get_one(&app.scylla).await?;
+    wallet.txn = txn.id; // txn.id may be not the walllet.txn, return the txn.id to the caller
+    Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
+}
 
-// pub async fn list(
-//     State(app): State<Arc<AppState>>,
-//     Extension(ctx): Extension<Arc<ReqContext>>,
-//     to: PackObject<Pagination>,
-// ) -> Result<PackObject<SuccessResponse<Vec<TaskOutput>>>, HTTPError> {
-//     let (to, input) = to.unpack();
-//     input.validate()?;
+// the txn is committed.
+// returns payer's wallet
+pub async fn sponsor(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<ExpendInput>,
+) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
 
-//     let page_size = input.page_size.unwrap_or(10);
-//     ctx.set_kvs(vec![
-//         ("action", "list_task".into()),
-//         ("uid", input.uid.to_string().into()),
-//         ("page_size", page_size.into()),
-//     ])
-//     .await;
+    let uid = input.uid.unwrap();
+    if input.payee.is_none() {
+        return Err(HTTPError::new(400, "payee is required".to_string()));
+    }
+    let payee = *input.payee.unwrap();
+    ctx.set_kvs(vec![
+        ("action", "sponsor".into()),
+        ("payer", uid.to_string().into()),
+        ("payee", payee.to_string().into()),
+        ("amount", input.amount.into()),
+    ])
+    .await;
 
-//     let fields = input.fields.unwrap_or_default();
-//     let res = db::Task::list(
-//         &app.scylla,
-//         input.uid.unwrap(),
-//         fields,
-//         page_size,
-//         token_to_xid(&input.page_token),
-//         input.status,
-//     )
-//     .await?;
-//     let next_page_token = if res.len() >= page_size as usize {
-//         to.with_option(token_from_xid(res.last().unwrap().id))
-//     } else {
-//         None
-//     };
+    let mut txn = db::Transaction::with_uid(uid);
+    if let Some(description) = input.description {
+        txn.description = description;
+    }
+    if let Some(payload) = input.payload {
+        txn.payload = payload.unwrap();
+    }
+    if let Some(sub_payee) = input.sub_payee {
+        ctx.set("sub_payee", sub_payee.to_string().into()).await;
+        txn.sub_payee = Some(sub_payee.unwrap());
+    }
 
-//     Ok(to.with(SuccessResponse {
-//         total_size: None,
-//         next_page_token,
-//         result: res
-//             .iter()
-//             .map(|r| TaskOutput::from(r.to_owned(), &to))
-//             .collect(),
-//     }))
-// }
+    txn.prepare(
+        &app.scylla,
+        &app.mac,
+        payee,
+        db::TransactionKind::Sponsor,
+        input.amount,
+    )
+    .await?;
+    txn.commit(&app.scylla, &app.mac).await?;
+
+    let mut credits = txn.credits();
+    db::Credit::save_all(&app.scylla, &mut credits).await?;
+
+    let mut wallet = db::Wallet::with_pk(uid);
+    wallet.get_one(&app.scylla).await?;
+    wallet.txn = txn.id; // txn.id may be not the walllet.txn, return the txn.id to the caller
+    Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
+}
+
+// the txn is committed.
+// returns payer's wallet
+pub async fn subscribe(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<ExpendInput>,
+) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
+
+    let uid = input.uid.unwrap();
+    if input.payee.is_none() {
+        return Err(HTTPError::new(400, "payee is required".to_string()));
+    }
+    let payee = *input.payee.unwrap();
+    ctx.set_kvs(vec![
+        ("action", "subscribe".into()),
+        ("payer", uid.to_string().into()),
+        ("payee", payee.to_string().into()),
+        ("amount", input.amount.into()),
+    ])
+    .await;
+
+    let mut txn = db::Transaction::with_uid(uid);
+    if let Some(description) = input.description {
+        txn.description = description;
+    }
+    if let Some(payload) = input.payload {
+        txn.payload = payload.unwrap();
+    }
+    if let Some(sub_payee) = input.sub_payee {
+        ctx.set("sub_payee", sub_payee.to_string().into()).await;
+        txn.sub_payee = Some(sub_payee.unwrap());
+    }
+
+    txn.prepare(
+        &app.scylla,
+        &app.mac,
+        payee,
+        db::TransactionKind::Subscribe,
+        input.amount,
+    )
+    .await?;
+    txn.commit(&app.scylla, &app.mac).await?;
+
+    let mut credits = txn.credits();
+    db::Credit::save_all(&app.scylla, &mut credits).await?;
+
+    let mut wallet = db::Wallet::with_pk(uid);
+    wallet.get_one(&app.scylla).await?;
+    wallet.txn = txn.id; // txn.id may be not the walllet.txn, return the txn.id to the caller
+    Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
+}

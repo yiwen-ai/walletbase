@@ -5,7 +5,7 @@ use scylla_orm_macros::CqlOrm;
 use crate::db::scylladb::{self, extract_applied};
 
 #[derive(Debug, Default, Clone, CqlOrm)]
-pub struct Topup {
+pub struct Charge {
     pub uid: xid::Id,
     pub id: xid::Id,
     pub status: i8,
@@ -15,7 +15,6 @@ pub struct Topup {
     pub currency: String,
     pub amount: i64,
     pub amount_refunded: i64,
-    pub exchange: i64,
     pub provider: String,
     pub charge_id: String,
     pub charge_payload: Vec<u8>,
@@ -27,7 +26,7 @@ pub struct Topup {
     pub _fields: Vec<String>, // selected fields，`_` 前缀字段会被 CqlOrm 忽略
 }
 
-impl Topup {
+impl Charge {
     pub fn with_pk(uid: xid::Id, id: xid::Id) -> Self {
         Self {
             uid,
@@ -76,7 +75,7 @@ impl Topup {
         self._fields = fields.clone();
 
         let query = format!(
-            "SELECT {} FROM topup WHERE uid=? AND id=? LIMIT 1",
+            "SELECT {} FROM charge WHERE uid=? AND id=? LIMIT 1",
             fields.join(",")
         );
         let params = (self.uid.to_cql(), self.id.to_cql());
@@ -89,13 +88,13 @@ impl Topup {
         Ok(())
     }
 
-    async fn set_status(
+    pub async fn set_status(
         &mut self,
         db: &scylladb::ScyllaDB,
         from: i8,
         to: i8,
     ) -> anyhow::Result<bool> {
-        let query = "UPDATE topup SET status=? WHERE uid=? AND id=? IF status=?";
+        let query = "UPDATE charge SET status=? WHERE uid=? AND id=? IF status=?";
         let params = (to, self.uid.to_cql(), self.id.to_cql(), from);
         let res = db.execute(query.to_string(), params).await?;
         let res = extract_applied(res);
@@ -106,6 +105,73 @@ impl Topup {
             self.get_one(db, vec!["status".to_string()]).await?;
         }
         Ok(res)
+    }
+
+    pub async fn update(
+        &mut self,
+        db: &scylladb::ScyllaDB,
+        cols: ColumnsMap,
+        status: i8,
+    ) -> anyhow::Result<bool> {
+        let valid_fields = vec![
+            "status",
+            "amount_refunded",
+            "charge_id",
+            "charge_payload",
+            "txn",
+            "txn_refunded",
+            "failure_code",
+            "failure_msg",
+        ];
+        let update_fields = cols.keys();
+        for field in &update_fields {
+            if !valid_fields.contains(&field.as_str()) {
+                return Err(HTTPError::new(400, format!("Invalid field: {}", field)).into());
+            }
+        }
+
+        self.get_one(db, vec!["status".to_string()]).await?;
+        if self.status != status {
+            return Err(HTTPError::new(
+                409,
+                format!(
+                    "Charge status conflict, expected {}, got {}",
+                    self.status, status
+                ),
+            )
+            .into());
+        }
+
+        let mut set_fields: Vec<String> = Vec::with_capacity(update_fields.len() + 1);
+        let mut params: Vec<CqlValue> = Vec::with_capacity(update_fields.len() + 1 + 3);
+
+        let new_updated_at = unix_ms() as i64;
+        set_fields.push("updated_at=?".to_string());
+        params.push(new_updated_at.to_cql());
+
+        for field in &update_fields {
+            set_fields.push(format!("{}=?", field));
+            params.push(cols.get(field).unwrap().to_owned());
+        }
+
+        let query = format!(
+            "UPDATE charge SET {} WHERE uid=? AND id=? IF status=?",
+            set_fields.join(",")
+        );
+        params.push(self.uid.to_cql());
+        params.push(self.id.to_cql());
+        params.push(status.to_cql());
+
+        let res = db.execute(query, params).await?;
+        if !extract_applied(res) {
+            return Err(
+                HTTPError::new(409, "Charge update failed, please try again".to_string()).into(),
+            );
+        }
+
+        self.fill(&cols); // fill for meilisearch update
+        self.updated_at = new_updated_at;
+        Ok(true)
     }
 
     pub async fn save(&mut self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
@@ -132,7 +198,7 @@ impl Topup {
         }
 
         let query = format!(
-            "INSERT INTO topup ({}) VALUES ({}) IF NOT EXISTS",
+            "INSERT INTO charge ({}) VALUES ({}) IF NOT EXISTS",
             cols_name.join(","),
             vals_name.join(",")
         );
@@ -154,21 +220,21 @@ impl Topup {
         let rows = if let Some(id) = page_token {
             if status.is_none() {
                 let query = format!(
-                    "SELECT {} FROM topup WHERE uid=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM charge WHERE uid=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                     fields.clone().join(",")
                 );
                 let params = (uid.to_cql(), id.to_cql(), page_size as i32);
                 db.execute_iter(query, params).await?
             } else {
                 let query = format!(
-                    "SELECT {} FROM topup WHERE uid=? AND status=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM charge WHERE uid=? AND status=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                     fields.clone().join(","));
                 let params = (uid.to_cql(), id.to_cql(), status.unwrap(), page_size as i32);
                 db.execute_iter(query, params).await?
             }
         } else if status.is_none() {
             let query = scylladb::Query::new(format!(
-                "SELECT {} FROM topup WHERE uid=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                "SELECT {} FROM charge WHERE uid=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                 fields.clone().join(",")
             ))
             .with_page_size(page_size as i32);
@@ -176,7 +242,7 @@ impl Topup {
             db.execute_iter(query, params).await?
         } else {
             let query = scylladb::Query::new(format!(
-                "SELECT {} FROM topup WHERE uid=? AND status=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                "SELECT {} FROM charge WHERE uid=? AND status=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                 fields.clone().join(",")
             ))
             .with_page_size(page_size as i32);

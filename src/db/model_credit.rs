@@ -13,7 +13,6 @@ use crate::db::scylladb::{self, extract_applied};
 #[derive(AsRefStr, Debug, EnumString, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum CreditKind {
-    Init,
     Award,
     Expenditure,
     Income,
@@ -110,19 +109,10 @@ impl Credit {
         let mut wallet = Wallet::with_pk(self.uid);
         wallet.get_one(db).await?;
 
-        let is_init = self.kind == CreditKind::Init.as_ref();
-        if is_init && wallet.credits > 0 {
-            return Err(
-                HTTPError::new(400, format!("Wallet {} already initialized", self.uid)).into(),
-            );
-        }
-
-        if wallet.credits == 0 && !is_init {
+        let with_init = self.kind == CreditKind::Award.as_ref();
+        if wallet.credits == 0 && !with_init {
             // credits is not initialized, skip
             return Ok(());
-        }
-        if is_init {
-            self.amount = 10;
         }
 
         let fields = Self::fields();
@@ -292,12 +282,10 @@ mod tests {
     #[test]
     fn credit_kind_works() {
         {
-            assert_eq!("init", CreditKind::Init.as_ref());
             assert_eq!("award", CreditKind::Award.as_ref());
             assert_eq!("expenditure", CreditKind::Expenditure.as_ref());
             assert_eq!("income", CreditKind::Income.as_ref());
 
-            assert_eq!(CreditKind::Init, CreditKind::from_str("init").unwrap());
             assert_eq!(CreditKind::Award, CreditKind::from_str("award").unwrap());
             assert_eq!(
                 CreditKind::Expenditure,
@@ -325,53 +313,39 @@ mod tests {
 
         let mut credit = Credit::with_pk(wallet.uid, xid::new());
         credit.amount = 10;
-        credit.kind = CreditKind::Award.to_string();
+        credit.kind = CreditKind::Expenditure.to_string();
         credit.save(&db).await.unwrap();
         assert!(credit.get_one(&db, vec![]).await.is_err());
 
-        credit.kind = CreditKind::Init.to_string();
+        credit.kind = CreditKind::Award.to_string();
         credit.save(&db).await.unwrap();
         credit.get_one(&db, vec![]).await.unwrap();
         wallet.get_one(&db).await.unwrap();
         assert_eq!(10, wallet.credits);
 
-        let mut credit = Credit::with_pk(wallet.uid, xid::new());
-        credit.amount = 10;
-        credit.kind = CreditKind::Init.to_string();
-        let res = credit.save(&db).await;
-        assert!(res.is_err());
-        assert!(res.unwrap_err().to_string().contains("already initialized"));
-
         credit.kind = CreditKind::Award.to_string();
         credit.save(&db).await.unwrap();
         wallet.get_one(&db).await.unwrap();
-        assert_eq!(20, wallet.credits);
-
-        credit.kind = CreditKind::Award.to_string();
-        credit.save(&db).await.unwrap();
-        wallet.get_one(&db).await.unwrap();
-        assert_eq!(20, wallet.credits);
+        assert_eq!(10, wallet.credits);
 
         let mut credit = Credit::with_pk(wallet.uid, xid::new());
         credit.amount = 100;
         credit.kind = CreditKind::Expenditure.to_string();
         credit.save(&db).await.unwrap();
         wallet.get_one(&db).await.unwrap();
-        assert_eq!(120, wallet.credits);
+        assert_eq!(110, wallet.credits);
 
         credit.save(&db).await.unwrap();
         wallet.get_one(&db).await.unwrap();
-        assert_eq!(120, wallet.credits);
+        assert_eq!(110, wallet.credits);
 
         let logs = Credit::list(&db, wallet.uid, vec![], 10, None, None)
             .await
             .unwrap();
-        assert_eq!(3, logs.len());
+        assert_eq!(2, logs.len());
         assert_eq!(CreditKind::Expenditure.to_string(), logs[0].kind);
         assert_eq!(100i64, logs[0].amount);
         assert_eq!(CreditKind::Award.to_string(), logs[1].kind);
         assert_eq!(10i64, logs[1].amount);
-        assert_eq!(CreditKind::Init.to_string(), logs[2].kind);
-        assert_eq!(10i64, logs[2].amount);
     }
 }

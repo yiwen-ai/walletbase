@@ -7,6 +7,9 @@ use axum_web::object::{cbor_from_slice, cbor_to_vec, PackObject};
 
 use crate::db::{self};
 
+pub mod charge;
+pub mod currency;
+pub mod transaction;
 pub mod wallet;
 
 pub const APP_NAME: &str = env!("CARGO_PKG_NAME");
@@ -15,6 +18,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Clone)]
 pub struct AppState {
     pub scylla: Arc<db::scylladb::ScyllaDB>,
+    pub mac: Arc<db::HMacTag>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -70,6 +74,19 @@ pub fn get_fields(fields: Option<String>) -> Vec<String> {
 }
 
 #[derive(Debug, Deserialize, Validate)]
+pub struct QueryUid {
+    pub uid: PackObject<xid::Id>,
+    pub fields: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct QueryUidId {
+    pub uid: PackObject<xid::Id>,
+    pub id: PackObject<xid::Id>,
+    pub fields: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
 pub struct Pagination {
     pub uid: PackObject<xid::Id>,
     pub page_token: Option<PackObject<Vec<u8>>>,
@@ -77,7 +94,14 @@ pub struct Pagination {
     pub page_size: Option<u16>,
     #[validate(range(min = -1, max = 2))]
     pub status: Option<i8>,
+    pub kind: Option<String>,
     pub fields: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TransactionPayload {
+    pub kind: String,
+    pub id: PackObject<xid::Id>,
 }
 
 pub fn token_to_xid(page_token: &Option<PackObject<Vec<u8>>>) -> Option<xid::Id> {
