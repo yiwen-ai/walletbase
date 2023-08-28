@@ -11,6 +11,9 @@ use scylla_orm_macros::CqlOrm;
 use super::{income_fee_rate, Credit, CreditKind, HMacTag, Wallet, SYS_FEE_RATE, SYS_ID};
 use crate::db::scylladb::{self, extract_applied};
 
+// user's wallet.topup can be negative to MAX_OVERDRAW.
+const MAX_OVERDRAW: i64 = 100;
+
 #[derive(AsRefStr, Debug, EnumString, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 pub enum TransactionKind {
@@ -129,20 +132,22 @@ impl TransactionKind {
             .into());
         }
 
-        let balance = match self {
+        let quota = match self {
             TransactionKind::Withdraw => wallet.income,
             TransactionKind::Refund => wallet.topup,
+            TransactionKind::Expenditure => wallet.balance() + MAX_OVERDRAW,
             _ => wallet.balance(),
         };
 
-        if balance < amount {
+        let b = wallet.balance();
+        if b <= 0 || quota < amount {
             return Err(HTTPError::new(
                 400,
                 format!(
                     "Insufficient balance for {} transaction, expected {}, got {}",
                     self.as_ref(),
                     amount,
-                    balance
+                    b
                 ),
             )
             .into());
@@ -158,17 +163,18 @@ impl TransactionKind {
             TransactionKind::Expenditure
             | TransactionKind::Sponsor
             | TransactionKind::Subscribe => {
-                let mut a = amount;
-                wallet.award -= a;
+                wallet.award -= amount;
                 if wallet.award < 0 {
-                    a = -wallet.award;
+                    wallet.topup -= -wallet.award;
                     wallet.award = 0;
-
-                    wallet.topup -= a;
                     if wallet.topup < 0 {
-                        a = -wallet.topup;
+                        wallet.income -= -wallet.topup;
                         wallet.topup = 0;
-                        wallet.income -= a;
+
+                        if wallet.income < 0 {
+                            // overdraw will be recorded on topup
+                            (wallet.topup, wallet.income) = (wallet.income, 0);
+                        }
                     }
                 }
             }
@@ -1081,7 +1087,7 @@ mod tests {
                 .is_ok());
             assert_eq!(0, wallet.balance());
             assert!(TransactionKind::Sponsor
-                .sub_payer_balance(&mut wallet, 100)
+                .sub_payer_balance(&mut wallet, 1000)
                 .is_err());
 
             wallet.award = 100;
@@ -1124,13 +1130,64 @@ mod tests {
             assert_eq!(0, wallet.topup);
             assert_eq!(40, wallet.income);
 
-            assert!(TransactionKind::Subscribe
+            assert!(TransactionKind::Refund
+                .sub_payer_balance(&mut wallet, 40)
+                .is_err());
+            assert!(TransactionKind::Withdraw
                 .sub_payer_balance(&mut wallet, 50)
                 .is_err());
-            assert!(TransactionKind::Subscribe
+            assert!(TransactionKind::Withdraw
                 .sub_payer_balance(&mut wallet, 40)
                 .is_ok());
             assert_eq!(0, wallet.balance());
+
+            assert!(TransactionKind::Sponsor
+                .sub_payer_balance(&mut wallet, 50)
+                .is_err());
+
+            wallet.award = 10;
+            wallet.topup = 10;
+            wallet.income = 10;
+            assert!(TransactionKind::Sponsor
+                .sub_payer_balance(&mut wallet, 50)
+                .is_err());
+            assert!(TransactionKind::Expenditure
+                .sub_payer_balance(&mut wallet, 50)
+                .is_ok());
+            assert_eq!(-20, wallet.balance());
+            assert_eq!(0, wallet.award);
+            assert_eq!(-20, wallet.topup);
+            assert_eq!(0, wallet.income);
+
+            wallet.award = 20;
+            assert!(TransactionKind::Expenditure
+                .sub_payer_balance(&mut wallet, 110)
+                .is_err());
+
+            wallet.award = 30;
+            assert!(TransactionKind::Subscribe
+                .sub_payer_balance(&mut wallet, 110)
+                .is_err());
+            assert!(TransactionKind::Expenditure
+                .sub_payer_balance(&mut wallet, 110)
+                .is_ok());
+            assert_eq!(-100, wallet.balance());
+            assert_eq!(0, wallet.award);
+            assert_eq!(-100, wallet.topup);
+            assert_eq!(0, wallet.income);
+
+            wallet.topup = 10;
+            assert_eq!(10, wallet.balance());
+            assert!(TransactionKind::Expenditure
+                .sub_payer_balance(&mut wallet, 120)
+                .is_err());
+            assert!(TransactionKind::Expenditure
+                .sub_payer_balance(&mut wallet, 110)
+                .is_ok());
+            assert_eq!(-100, wallet.balance());
+            assert_eq!(0, wallet.award);
+            assert_eq!(-100, wallet.topup);
+            assert_eq!(0, wallet.income);
         }
 
         // rollback_payer_balance

@@ -23,7 +23,7 @@ pub struct WalletOutput {
     pub topup: i64,
     pub income: i64,
     pub credits: i64,
-    pub txn: Option<PackObject<xid::Id>>,
+    pub txn: PackObject<xid::Id>,
 }
 
 impl WalletOutput {
@@ -34,11 +34,7 @@ impl WalletOutput {
             topup: val.topup,
             income: val.income,
             credits: val.credits,
-            txn: if val.txn.is_zero() {
-                None
-            } else {
-                Some(to.with(val.txn))
-            },
+            txn: to.with(val.txn),
         }
     }
 }
@@ -69,8 +65,8 @@ pub struct AwardInput {
     pub payee: PackObject<xid::Id>,
     #[validate(range(min = 1, max = 1000000))]
     pub amount: i64,
-    #[validate(range(min = 1, max = 1000000))]
-    pub credits: Option<i64>,
+    #[validate(range(min = 0, max = 1000000))]
+    pub credits: u64,
     pub description: Option<String>,
     pub payload: Option<PackObject<Vec<u8>>>,
 }
@@ -111,12 +107,12 @@ pub async fn award(
     .await?;
     txn.commit(&app.scylla, &app.mac).await?;
 
-    if let Some(amount) = input.credits {
+    if input.credits > 0 {
         let mut credit = db::Credit::with_pk(payee, txn.id);
         credit.kind = db::CreditKind::Award.to_string();
-        credit.amount = amount;
+        credit.amount = input.credits as i64;
         credit.save(&app.scylla).await?;
-        ctx.set("credits", amount.into()).await;
+        ctx.set("credits", input.credits.into()).await;
     }
 
     let mut wallet = db::Wallet::with_pk(payee);

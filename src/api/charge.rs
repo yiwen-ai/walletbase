@@ -302,13 +302,15 @@ pub async fn complete(
     }
     doc.get_one(&app.scylla, vec!["quantity".to_string()])
         .await?;
-    let mut txn: db::Transaction = Default::default();
-    txn.description = "complete_charge".to_string();
-    let payload = TransactionPayload {
-        kind: "charge".to_string(),
-        id: PackObject::Cbor(doc.id),
+    let mut txn = db::Transaction {
+        description: "complete_charge".to_string(),
+        payload: cbor_to_vec(&TransactionPayload {
+            kind: "charge".to_string(),
+            id: PackObject::Cbor(doc.id),
+        })
+        .unwrap_or_default(),
+        ..Default::default()
     };
-    txn.payload = cbor_to_vec(&payload).unwrap_or_default();
 
     txn.prepare(
         &app.scylla,

@@ -55,7 +55,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 344,
         min_amount: 1000, // stripe: $4.00
-        max_amount: 100000,
+        max_amount: 1000000,
     },
     Currency {
         name: "US Dollar",
@@ -63,7 +63,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 840,
         min_amount: 200, // stripe: $0.50
-        max_amount: 20000,
+        max_amount: 200000,
     },
     Currency {
         name: "人民币",
@@ -71,7 +71,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 156,
         min_amount: 1000, // stripe: -
-        max_amount: 100000,
+        max_amount: 1000000,
     },
     Currency {
         name: "Euro",
@@ -79,7 +79,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 978,
         min_amount: 200, // stripe: €0.50
-        max_amount: 20000,
+        max_amount: 200000,
     },
     Currency {
         name: "日本円",
@@ -87,7 +87,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 0,
         code: 392,
         min_amount: 200, // stripe: ¥50
-        max_amount: 20000,
+        max_amount: 200000,
     },
     Currency {
         name: "Pound Sterling",
@@ -95,7 +95,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 826,
         min_amount: 100, // stripe: £0.30
-        max_amount: 10000,
+        max_amount: 100000,
     },
     Currency {
         name: "Canadian Dollar",
@@ -103,7 +103,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 124,
         min_amount: 200, // stripe: $0.50
-        max_amount: 20000,
+        max_amount: 200000,
     },
     Currency {
         name: "Singapore Dollar",
@@ -111,7 +111,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 702,
         min_amount: 200, // stripe: $0.50
-        max_amount: 20000,
+        max_amount: 200000,
     },
     Currency {
         name: "Australian Dollar",
@@ -119,7 +119,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 36,
         min_amount: 200, // stripe: $0.50
-        max_amount: 20000,
+        max_amount: 200000,
     },
     Currency {
         name: "درهم إماراتي",
@@ -127,7 +127,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 784,
         min_amount: 500, // stripe: 2.00 د.إ
-        max_amount: 50000,
+        max_amount: 500000,
     },
     Currency {
         name: "원",
@@ -135,7 +135,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 0,
         code: 410,
         min_amount: 2000, // stripe: -
-        max_amount: 200000,
+        max_amount: 2000000,
     },
     Currency {
         name: "рубль",
@@ -143,7 +143,7 @@ pub const CURRENCIES: [Currency; 12] = [
         decimals: 2,
         code: 643,
         min_amount: 10000, // stripe: -
-        max_amount: 1000000,
+        max_amount: 10000000,
     },
 ];
 
