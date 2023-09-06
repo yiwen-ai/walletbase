@@ -15,3 +15,4 @@ target/
 
 
 config.toml
+.env

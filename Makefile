@@ -4,7 +4,7 @@ ignore_output = &> /dev/null
 .PHONY: run-dev test build docker
 
 run-dev:
-	@CONFIG_FILE_PATH=./config.toml cargo run
+	@cargo run
 
 test:
 	@cargo test --workspace -- --nocapture

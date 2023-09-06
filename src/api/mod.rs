@@ -1,7 +1,7 @@
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use validator::Validate;
+use validator::{Validate, ValidationError};
 
 use axum_web::object::{cbor_from_slice, cbor_to_vec, PackObject};
 
@@ -9,6 +9,7 @@ use crate::db::{self};
 
 pub mod charge;
 pub mod currency;
+pub mod customer;
 pub mod transaction;
 pub mod wallet;
 
@@ -102,6 +103,9 @@ pub struct Pagination {
 pub struct TransactionPayload {
     pub kind: String,
     pub id: PackObject<xid::Id>,
+    pub provider: Option<String>,
+    pub currency: Option<String>,
+    pub amount: Option<i64>,
 }
 
 pub fn token_to_xid(page_token: &Option<PackObject<Vec<u8>>>) -> Option<xid::Id> {
@@ -115,4 +119,13 @@ pub fn token_to_xid(page_token: &Option<PackObject<Vec<u8>>>) -> Option<xid::Id>
 
 pub fn token_from_xid(id: xid::Id) -> Option<Vec<u8>> {
     cbor_to_vec(&PackObject::Cbor(id)).ok()
+}
+
+static PROVIDERS: [&str; 1] = ["stripe"];
+
+pub(crate) fn validate_provider(provider: &str) -> Result<(), ValidationError> {
+    if PROVIDERS.contains(&provider) {
+        return Ok(());
+    }
+    Err(ValidationError::new("unsupported provider"))
 }

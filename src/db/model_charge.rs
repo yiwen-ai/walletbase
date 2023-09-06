@@ -52,6 +52,14 @@ impl Charge {
         if !select_fields.contains(&field) {
             select_fields.push(field);
         }
+        let field = "quantity".to_string();
+        if !select_fields.contains(&field) {
+            select_fields.push(field);
+        }
+        let field = "provider".to_string();
+        if !select_fields.contains(&field) {
+            select_fields.push(field);
+        }
         if with_pk {
             let field = "uid".to_string();
             if !select_fields.contains(&field) {
@@ -113,7 +121,7 @@ impl Charge {
         cols: ColumnsMap,
         status: i8,
     ) -> anyhow::Result<bool> {
-        let valid_fields = vec![
+        let valid_fields = [
             "status",
             "amount_refunded",
             "charge_id",
@@ -181,7 +189,7 @@ impl Charge {
 
         self.id = xid::new();
         self.updated_at = unix_ms() as i64;
-        self.expire_at = self.updated_at + 3600 * 1000;
+        self.expire_at = self.updated_at + 24 * 3600 * 1000;
 
         let fields = Self::fields();
         self._fields = fields.clone();
@@ -204,7 +212,13 @@ impl Charge {
         );
 
         let res = db.execute(query, params).await?;
-        Ok(extract_applied(res))
+        if !extract_applied(res) {
+            return Err(
+                HTTPError::new(409, "Charge save failed, please try again".to_string()).into(),
+            );
+        }
+
+        Ok(true)
     }
 
     pub async fn list(

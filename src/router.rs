@@ -58,6 +58,13 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
                 .route("/commit", routing::post(api::transaction::commit))
                 .route("/cancel", routing::post(api::transaction::cancel)),
         )
+        .nest(
+            "/v1/customer",
+            Router::new().route(
+                "/",
+                routing::post(api::customer::upsert).get(api::customer::get),
+            ),
+        )
         .route_layer(mds)
         .with_state(app_state.clone());
 
