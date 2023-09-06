@@ -123,6 +123,8 @@ impl Charge {
     ) -> anyhow::Result<bool> {
         let valid_fields = [
             "status",
+            "currency",
+            "amount",
             "amount_refunded",
             "charge_id",
             "charge_payload",

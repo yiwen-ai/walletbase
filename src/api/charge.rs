@@ -20,13 +20,13 @@ use crate::db;
 #[derive(Debug, Deserialize, Validate)]
 pub struct ChargeInput {
     pub uid: PackObject<xid::Id>,
-    pub currency: String,
-    #[validate(range(min = 10))]
-    pub amount: i64,
-    #[validate(range(min = 10, max = 1_000_000))]
-    pub quantity: i64,
     #[validate(length(min = 1), custom = "validate_provider")]
     pub provider: String, // stripe
+    #[validate(range(min = 10, max = 1_000_000))]
+    pub quantity: i64,
+    pub currency: Option<String>,
+    #[validate(range(min = 1))]
+    pub amount: Option<i64>,
     pub charge_id: Option<String>,
     pub charge_payload: Option<PackObject<Vec<u8>>>,
 }
@@ -103,7 +103,6 @@ pub async fn create(
 ) -> Result<PackObject<SuccessResponse<ChargeOutput>>, HTTPError> {
     let (to, input) = to.unpack();
     input.validate()?;
-    let cur = Currency::from_str(&input.currency)?;
 
     let uid = input.uid.unwrap();
     ctx.set_kvs(vec![
@@ -119,11 +118,19 @@ pub async fn create(
     let mut doc = db::Charge {
         uid,
         quantity: input.quantity,
-        currency: cur.alpha.to_lowercase(),
-        amount: input.amount,
         provider: input.provider,
         ..Default::default()
     };
+
+    if let Some(amount) = input.amount {
+        let cur = Currency::from_str(
+            &input
+                .currency
+                .ok_or(HTTPError::new(400, "currency required".to_string()))?,
+        )?;
+        doc.amount = amount;
+        doc.currency = cur.alpha.to_lowercase();
+    }
 
     if let Some(charge_id) = input.charge_id {
         ctx.set("charge_id", charge_id.clone().into()).await;
@@ -212,6 +219,11 @@ pub struct UpdateChargeInput {
     pub current_status: i8,
     #[validate(range(min = -2, max = 1))]
     pub status: Option<i8>,
+    pub currency: Option<String>,
+    #[validate(range(min = 1))]
+    pub amount: Option<i64>,
+    #[validate(range(min = 1))]
+    pub amount_refunded: Option<i64>,
     pub charge_id: Option<String>,
     pub charge_payload: Option<PackObject<Vec<u8>>>,
     pub failure_code: Option<String>,
