@@ -239,6 +239,15 @@ impl UpdateChargeInput {
             }
             cols.set_as("status", &status);
         }
+        if let Some(currency) = self.currency {
+            cols.set_as("currency", &currency);
+        }
+        if let Some(amount) = self.amount {
+            cols.set_as("amount", &amount);
+        }
+        if let Some(amount_refunded) = self.amount_refunded {
+            cols.set_as("amount_refunded", &amount_refunded);
+        }
         if let Some(charge_id) = self.charge_id {
             cols.set_as("charge_id", &charge_id);
         }
@@ -295,6 +304,9 @@ pub async fn update(
 pub struct CompleteChargeInput {
     pub uid: PackObject<xid::Id>,
     pub id: PackObject<xid::Id>,
+    pub currency: String,
+    #[validate(range(min = 1))]
+    pub amount: i64,
     pub charge_id: String,
     pub charge_payload: PackObject<Vec<u8>>,
 }
@@ -303,7 +315,7 @@ pub async fn complete(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
     to: PackObject<CompleteChargeInput>,
-) -> Result<PackObject<SuccessResponse<bool>>, HTTPError> {
+) -> Result<PackObject<SuccessResponse<ChargeOutput>>, HTTPError> {
     let (to, input) = to.unpack();
     input.validate()?;
 
@@ -339,10 +351,16 @@ pub async fn complete(
         ));
     }
 
-    let ok = doc.set_status(&app.scylla, 1, 2).await?;
+    let mut cols = ColumnsMap::new();
+    cols.set_as("status", &2i8);
+    cols.set_as("currency", &input.currency);
+    cols.set_as("amount", &input.amount);
+    cols.set_as("charge_payload", &input.charge_payload.unwrap());
+
+    let ok = doc.update(&app.scylla, cols, 1).await?;
     if !ok {
         if doc.status >= 2 {
-            return Ok(to.with(SuccessResponse::new(false)));
+            return Ok(to.with(SuccessResponse::new(ChargeOutput::from(doc, &to))));
         }
 
         return Err(HTTPError::new(
@@ -357,8 +375,8 @@ pub async fn complete(
             kind: "charge".to_string(),
             id: PackObject::Cbor(doc.id),
             provider: Some(doc.provider.clone()),
-            currency: Some(doc.currency.clone()),
-            amount: Some(doc.amount),
+            currency: Some(input.currency.clone()),
+            amount: Some(input.amount),
         })
         .unwrap_or_default(),
         ..Default::default()
@@ -379,5 +397,5 @@ pub async fn complete(
     cols.set_as("txn", &txn.id);
     doc.update(&app.scylla, cols, 2i8).await?;
 
-    Ok(to.with(SuccessResponse::new(true)))
+    Ok(to.with(SuccessResponse::new(ChargeOutput::from(doc, &to))))
 }
