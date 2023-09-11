@@ -14,7 +14,7 @@ use crate::db::scylladb::{self, extract_applied};
 #[strum(serialize_all = "lowercase")]
 pub enum CreditKind {
     Award,
-    Expenditure,
+    Payout,
     Income,
 }
 
@@ -283,14 +283,11 @@ mod tests {
     fn credit_kind_works() {
         {
             assert_eq!("award", CreditKind::Award.as_ref());
-            assert_eq!("expenditure", CreditKind::Expenditure.as_ref());
+            assert_eq!("payout", CreditKind::Payout.as_ref());
             assert_eq!("income", CreditKind::Income.as_ref());
 
             assert_eq!(CreditKind::Award, CreditKind::from_str("award").unwrap());
-            assert_eq!(
-                CreditKind::Expenditure,
-                CreditKind::from_str("expenditure").unwrap()
-            );
+            assert_eq!(CreditKind::Payout, CreditKind::from_str("payout").unwrap());
             assert_eq!(CreditKind::Income, CreditKind::from_str("income").unwrap());
         }
     }
@@ -313,7 +310,7 @@ mod tests {
 
         let mut credit = Credit::with_pk(wallet.uid, xid::new());
         credit.amount = 10;
-        credit.kind = CreditKind::Expenditure.to_string();
+        credit.kind = CreditKind::Payout.to_string();
         credit.save(&db).await.unwrap();
         assert!(credit.get_one(&db, vec![]).await.is_err());
 
@@ -330,7 +327,7 @@ mod tests {
 
         let mut credit = Credit::with_pk(wallet.uid, xid::new());
         credit.amount = 100;
-        credit.kind = CreditKind::Expenditure.to_string();
+        credit.kind = CreditKind::Payout.to_string();
         credit.save(&db).await.unwrap();
         wallet.get_one(&db).await.unwrap();
         assert_eq!(110, wallet.credits);
@@ -343,7 +340,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(2, logs.len());
-        assert_eq!(CreditKind::Expenditure.to_string(), logs[0].kind);
+        assert_eq!(CreditKind::Payout.to_string(), logs[0].kind);
         assert_eq!(100i64, logs[0].amount);
         assert_eq!(CreditKind::Award.to_string(), logs[1].kind);
         assert_eq!(10i64, logs[1].amount);

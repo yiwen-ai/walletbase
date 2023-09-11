@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS transaction (
     payee       BLOB,     -- user id
     sub_payee   BLOB,     -- user id, sub payee
     status      TINYINT,  -- int8, -2: canceled, -1: canceling, 0: preparing, 1: prepared, 2: committing, 3: committed
-    kind        TEXT,     -- award, topup, expenditure, sponsor, subscribe, etc.
+    kind        TEXT,     -- award, topup, spend, sponsor, subscribe, etc.
     amount      BIGINT,   -- total amount of Yiwen Coin that payer pays
     sys_fee     BIGINT,   -- amount of Yiwen Coin to system as fee
     sub_shares  BIGINT,   -- amount of Yiwen Coin to sub payee
@@ -43,7 +43,7 @@ CREATE INDEX transaction_uid_status ON transaction ((uid), kind);
 CREATE TABLE IF NOT EXISTS credit (
     uid         BLOB,    -- user id
     txn         BLOB,    -- txn id that initiates this credit log
-    kind        TEXT,    -- kind of log: init, expenditure, income, award, etc.
+    kind        TEXT,    -- kind of log: payout, income, award, etc.
     amount      BIGINT,  -- the amount of credits to add to the user
     description TEXT,    -- description
     PRIMARY KEY (uid, txn)

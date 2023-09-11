@@ -122,7 +122,7 @@ pub async fn award(
 }
 
 #[derive(Debug, Deserialize, Validate)]
-pub struct ExpendInput {
+pub struct SpendInput {
     pub uid: PackObject<xid::Id>,
     pub payee: Option<PackObject<xid::Id>>,
     pub sub_payee: Option<PackObject<xid::Id>>,
@@ -134,17 +134,17 @@ pub struct ExpendInput {
 
 // the txn is not committed, it should be committed or cancelled by the caller
 // returns payer's wallet
-pub async fn expend(
+pub async fn spend(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
-    to: PackObject<ExpendInput>,
+    to: PackObject<SpendInput>,
 ) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
     let (to, input) = to.unpack();
     input.validate()?;
 
     let uid = input.uid.unwrap();
     ctx.set_kvs(vec![
-        ("action", "expend".into()),
+        ("action", "spend".into()),
         ("payer", uid.to_string().into()),
         ("amount", input.amount.into()),
     ])
@@ -162,7 +162,7 @@ pub async fn expend(
         &app.scylla,
         &app.mac,
         SYS_ID,
-        db::TransactionKind::Expenditure,
+        db::TransactionKind::Spend,
         input.amount,
     )
     .await?;
@@ -178,7 +178,7 @@ pub async fn expend(
 pub async fn sponsor(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
-    to: PackObject<ExpendInput>,
+    to: PackObject<SpendInput>,
 ) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
     let (to, input) = to.unpack();
     input.validate()?;
@@ -232,7 +232,7 @@ pub async fn sponsor(
 pub async fn subscribe(
     State(app): State<Arc<AppState>>,
     Extension(ctx): Extension<Arc<ReqContext>>,
-    to: PackObject<ExpendInput>,
+    to: PackObject<SpendInput>,
 ) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
     let (to, input) = to.unpack();
     input.validate()?;

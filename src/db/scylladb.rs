@@ -25,8 +25,8 @@ impl ScyllaDB {
         // use tls https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls.rs
 
         let handle = ExecutionProfile::builder()
-            .consistency(Consistency::LocalQuorum)
-            .serial_consistency(Some(SerialConsistency::LocalSerial))
+            .consistency(Consistency::Quorum)
+            .serial_consistency(Some(SerialConsistency::Serial))
             .request_timeout(Some(Duration::from_secs(5)))
             .build()
             .into_handle();
@@ -44,7 +44,7 @@ impl ScyllaDB {
         }
 
         Ok(Self {
-            session: CachingSession::from(session, 10000),
+            session: CachingSession::from(session, 100000),
         })
     }
 

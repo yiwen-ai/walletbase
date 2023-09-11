@@ -29,6 +29,7 @@ impl FromStr for Currency {
     }
 }
 
+// https://en.wikipedia.org/wiki/Template:Most_traded_currencies
 // https://www.iban.com/currency-codes
 // https://github.com/yiwen-ai/countries
 pub const CURRENCIES: [Currency; 12] = [

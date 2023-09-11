@@ -22,7 +22,7 @@ pub struct ChargeInput {
     pub uid: PackObject<xid::Id>,
     #[validate(length(min = 1), custom = "validate_provider")]
     pub provider: String, // stripe
-    #[validate(range(min = 10, max = 1_000_000))]
+    #[validate(range(min = 50, max = 1_000_000))]
     pub quantity: i64,
     pub currency: Option<String>,
     #[validate(range(min = 1))]

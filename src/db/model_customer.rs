@@ -125,6 +125,10 @@ impl Customer {
             self.get_one(db, vec!["customer".to_string()]).await?;
         }
 
+        if self.customer == customer {
+            return Ok(false);
+        }
+
         let new_updated_at = unix_ms() as i64;
         let query = "UPDATE customer SET updated_at=?,customer=?,payload=?,customers=customers+{?} WHERE uid=? AND provider=? IF customer=?";
         let params = (

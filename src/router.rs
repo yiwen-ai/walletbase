@@ -31,7 +31,7 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
             Router::new()
                 .route("/", routing::get(api::wallet::get))
                 .route("/award", routing::post(api::wallet::award))
-                .route("/expend", routing::post(api::wallet::expend))
+                .route("/spend", routing::post(api::wallet::spend))
                 .route("/sponsor", routing::post(api::wallet::sponsor))
                 .route("/subscribe", routing::post(api::wallet::subscribe)),
         )

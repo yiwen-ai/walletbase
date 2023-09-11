@@ -19,11 +19,12 @@ const MAX_OVERDRAW: i64 = 100;
 pub enum TransactionKind {
     Award,
     Topup,
-    Expenditure,
+    Refund,
+    Withdraw,
+    Spend,
     Sponsor,
     Subscribe,
-    Withdraw,
-    Refund,
+    // Redpacket, // TODO
 }
 
 impl ToString for TransactionKind {
@@ -62,7 +63,7 @@ impl TransactionKind {
 
     pub fn check_payee(&self, uid: xid::Id) -> anyhow::Result<()> {
         match self {
-            TransactionKind::Expenditure | TransactionKind::Withdraw | TransactionKind::Refund => {
+            TransactionKind::Spend | TransactionKind::Withdraw | TransactionKind::Refund => {
                 if uid != SYS_ID {
                     return Err(HTTPError::new(
                         400,
@@ -124,7 +125,7 @@ impl TransactionKind {
             return Ok(());
         }
 
-        if wallet.credits == 0 && *self != TransactionKind::Expenditure {
+        if wallet.credits == 0 && *self != TransactionKind::Spend {
             return Err(HTTPError::new(
                 400,
                 format!("Require credits for {} transaction", self.as_ref()),
@@ -135,7 +136,7 @@ impl TransactionKind {
         let quota = match self {
             TransactionKind::Withdraw => wallet.income,
             TransactionKind::Refund => wallet.topup,
-            TransactionKind::Expenditure => wallet.balance() + MAX_OVERDRAW,
+            TransactionKind::Spend => wallet.balance() + MAX_OVERDRAW,
             _ => wallet.balance(),
         };
 
@@ -160,9 +161,7 @@ impl TransactionKind {
             TransactionKind::Refund => {
                 wallet.topup -= amount;
             }
-            TransactionKind::Expenditure
-            | TransactionKind::Sponsor
-            | TransactionKind::Subscribe => {
+            TransactionKind::Spend | TransactionKind::Sponsor | TransactionKind::Subscribe => {
                 wallet.award -= amount;
                 if wallet.award < 0 {
                     wallet.topup -= -wallet.award;
@@ -205,9 +204,7 @@ impl TransactionKind {
             TransactionKind::Withdraw => {
                 wallet.income += amount;
             }
-            TransactionKind::Expenditure
-            | TransactionKind::Sponsor
-            | TransactionKind::Subscribe => {
+            TransactionKind::Spend | TransactionKind::Sponsor | TransactionKind::Subscribe => {
                 // can not rollback to award or income balance.
                 wallet.topup += amount;
             }
@@ -224,9 +221,7 @@ impl TransactionKind {
             TransactionKind::Topup | TransactionKind::Refund | TransactionKind::Withdraw => {
                 wallet.topup += amount;
             }
-            TransactionKind::Expenditure
-            | TransactionKind::Sponsor
-            | TransactionKind::Subscribe => {
+            TransactionKind::Spend | TransactionKind::Sponsor | TransactionKind::Subscribe => {
                 wallet.income += amount;
             }
         }
@@ -342,13 +337,11 @@ impl Transaction {
         let kind = kind.unwrap();
         let mut logs: Vec<Credit> = Vec::with_capacity(3);
         match kind {
-            TransactionKind::Expenditure
-            | TransactionKind::Sponsor
-            | TransactionKind::Subscribe => {
+            TransactionKind::Spend | TransactionKind::Sponsor | TransactionKind::Subscribe => {
                 logs.push(Credit {
                     uid: self.uid,
                     txn: self.id,
-                    kind: CreditKind::Expenditure.to_string(),
+                    kind: CreditKind::Payout.to_string(),
                     amount: self.amount,
                     description: self.description.clone(),
                     ..Default::default()
@@ -983,7 +976,7 @@ mod tests {
         {
             assert_eq!("award", TransactionKind::Award.as_ref());
             assert_eq!("topup", TransactionKind::Topup.as_ref());
-            assert_eq!("expenditure", TransactionKind::Expenditure.as_ref());
+            assert_eq!("spend", TransactionKind::Spend.as_ref());
             assert_eq!("sponsor", TransactionKind::Sponsor.as_ref());
             assert_eq!("subscribe", TransactionKind::Subscribe.as_ref());
             assert_eq!("withdraw", TransactionKind::Withdraw.as_ref());
@@ -1007,13 +1000,13 @@ mod tests {
             assert!(TransactionKind::Award.check_payer(uid).is_err());
             assert!(TransactionKind::Topup.check_payer(uid).is_err());
 
-            assert!(TransactionKind::Expenditure.check_payer(uid).is_ok());
+            assert!(TransactionKind::Spend.check_payer(uid).is_ok());
             assert!(TransactionKind::Sponsor.check_payer(uid).is_ok());
             assert!(TransactionKind::Subscribe.check_payer(uid).is_ok());
             assert!(TransactionKind::Withdraw.check_payer(uid).is_ok());
             assert!(TransactionKind::Refund.check_payer(uid).is_ok());
 
-            assert!(TransactionKind::Expenditure.check_payer(SYS_ID).is_err());
+            assert!(TransactionKind::Spend.check_payer(SYS_ID).is_err());
             assert!(TransactionKind::Sponsor.check_payer(SYS_ID).is_err());
             assert!(TransactionKind::Subscribe.check_payer(SYS_ID).is_err());
             assert!(TransactionKind::Withdraw.check_payer(SYS_ID).is_err());
@@ -1022,11 +1015,11 @@ mod tests {
 
         // check_payee
         {
-            assert!(TransactionKind::Expenditure.check_payee(SYS_ID).is_ok());
+            assert!(TransactionKind::Spend.check_payee(SYS_ID).is_ok());
             assert!(TransactionKind::Withdraw.check_payee(SYS_ID).is_ok());
             assert!(TransactionKind::Refund.check_payee(SYS_ID).is_ok());
 
-            assert!(TransactionKind::Expenditure.check_payee(uid).is_err());
+            assert!(TransactionKind::Spend.check_payee(uid).is_err());
             assert!(TransactionKind::Withdraw.check_payee(uid).is_err());
             assert!(TransactionKind::Refund.check_payee(uid).is_err());
 
@@ -1045,7 +1038,7 @@ mod tests {
         {
             assert!(TransactionKind::Award.check_sub_payee(uid).is_err());
             assert!(TransactionKind::Topup.check_sub_payee(uid).is_err());
-            assert!(TransactionKind::Expenditure.check_sub_payee(uid).is_err());
+            assert!(TransactionKind::Spend.check_sub_payee(uid).is_err());
             assert!(TransactionKind::Sponsor.check_sub_payee(uid).is_ok());
             assert!(TransactionKind::Subscribe.check_sub_payee(uid).is_ok());
             assert!(TransactionKind::Withdraw.check_sub_payee(uid).is_err());
@@ -1068,7 +1061,7 @@ mod tests {
                 .sub_payer_balance(&mut sys_wallet, 100)
                 .is_ok());
             assert_eq!(-100, sys_wallet.topup);
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut sys_wallet, 100)
                 .is_err());
             assert_eq!(-300, sys_wallet.balance());
@@ -1116,7 +1109,7 @@ mod tests {
             assert!(TransactionKind::Award
                 .sub_payer_balance(&mut wallet, 110)
                 .is_err());
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut wallet, 110)
                 .is_ok());
             assert_eq!(90, wallet.balance());
@@ -1151,7 +1144,7 @@ mod tests {
             assert!(TransactionKind::Sponsor
                 .sub_payer_balance(&mut wallet, 50)
                 .is_err());
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut wallet, 50)
                 .is_ok());
             assert_eq!(-20, wallet.balance());
@@ -1160,7 +1153,7 @@ mod tests {
             assert_eq!(0, wallet.income);
 
             wallet.award = 20;
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut wallet, 110)
                 .is_err());
 
@@ -1168,7 +1161,7 @@ mod tests {
             assert!(TransactionKind::Subscribe
                 .sub_payer_balance(&mut wallet, 110)
                 .is_err());
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut wallet, 110)
                 .is_ok());
             assert_eq!(-100, wallet.balance());
@@ -1178,10 +1171,10 @@ mod tests {
 
             wallet.topup = 10;
             assert_eq!(10, wallet.balance());
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut wallet, 120)
                 .is_err());
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .sub_payer_balance(&mut wallet, 110)
                 .is_ok());
             assert_eq!(-100, wallet.balance());
@@ -1210,7 +1203,7 @@ mod tests {
                 .is_ok());
             assert_eq!(1, wallet.income);
 
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .rollback_payer_balance(&mut wallet, 1)
                 .is_ok());
             assert_eq!(3, wallet.topup);
@@ -1249,7 +1242,7 @@ mod tests {
                 .is_ok());
             assert_eq!(3, wallet.topup);
 
-            assert!(TransactionKind::Expenditure
+            assert!(TransactionKind::Spend
                 .add_payee_balance(&mut wallet, 1)
                 .is_ok());
             assert_eq!(1, wallet.income);
@@ -1453,7 +1446,7 @@ mod tests {
             assert!(res.unwrap_err().to_string().contains("Invalid amount 0"));
 
             let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
-            txn.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 400)
+            txn.prepare(&db, &mac, SYS_ID, TransactionKind::Spend, 400)
                 .await
                 .unwrap();
 
@@ -1479,7 +1472,7 @@ mod tests {
             assert_eq!(-2, txn.status);
 
             let mut txn: Transaction = Transaction::with_uid(payer_wallet.uid);
-            txn.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 100)
+            txn.prepare(&db, &mac, SYS_ID, TransactionKind::Spend, 100)
                 .await
                 .unwrap();
             txn.commit(&db, &mac).await.unwrap();
@@ -1492,7 +1485,7 @@ mod tests {
             assert_eq!(3, txn.status);
 
             let mut txn1: Transaction = Transaction::with_uid(payer_wallet.uid);
-            txn1.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 600)
+            txn1.prepare(&db, &mac, SYS_ID, TransactionKind::Spend, 600)
                 .await
                 .unwrap();
             payer_wallet.get_one(&db).await.unwrap();
@@ -1504,7 +1497,7 @@ mod tests {
             assert_eq!(1, txn1.status);
 
             let mut txn2: Transaction = Transaction::with_uid(payer_wallet.uid);
-            txn2.prepare(&db, &mac, SYS_ID, TransactionKind::Expenditure, 100)
+            txn2.prepare(&db, &mac, SYS_ID, TransactionKind::Spend, 100)
                 .await
                 .unwrap();
             txn2.commit(&db, &mac).await.unwrap();
@@ -1569,7 +1562,7 @@ mod tests {
             let mut credits = txn.credits();
             assert_eq!(2, credits.len());
             assert_eq!(100, credits[0].amount);
-            assert_eq!("expenditure", credits[0].kind);
+            assert_eq!("payout", credits[0].kind);
             assert_eq!(70, credits[1].amount);
             assert_eq!("income", credits[1].kind);
             Credit::save_all(&db, &mut credits).await.unwrap();
@@ -1611,7 +1604,7 @@ mod tests {
             let mut credits = txn.credits();
             assert_eq!(3, credits.len());
             assert_eq!(200, credits[0].amount);
-            assert_eq!("expenditure", credits[0].kind);
+            assert_eq!("payout", credits[0].kind);
             assert_eq!(70, credits[1].amount);
             assert_eq!("income", credits[1].kind);
             assert_eq!(70, credits[2].amount);
