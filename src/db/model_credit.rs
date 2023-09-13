@@ -229,7 +229,7 @@ impl Credit {
             db.execute_iter(query, params).await?
         } else {
             let query = format!(
-                    "SELECT {} FROM credit WHERE uid=? AND kind=? AND txn<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM credit WHERE uid=? AND kind=? AND txn<? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 uid.to_cql(),
