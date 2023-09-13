@@ -585,7 +585,12 @@ impl Transaction {
     }
 
     // do it after prepared.
-    pub async fn commit(&mut self, db: &scylladb::ScyllaDB, mac: &HMacTag) -> anyhow::Result<()> {
+    // returns payee's wallet.
+    pub async fn commit(
+        &mut self,
+        db: &scylladb::ScyllaDB,
+        mac: &HMacTag,
+    ) -> anyhow::Result<Option<Wallet>> {
         let kind = TransactionKind::from_str(&self.kind)?;
         kind.check_payee(self.payee)?;
 
@@ -597,7 +602,7 @@ impl Transaction {
         if !ok {
             if self.status == 3 {
                 // already committed
-                return Ok(());
+                return Ok(None);
             }
 
             return Err(HTTPError::new(
@@ -757,7 +762,7 @@ impl Transaction {
 
         if errs.is_empty() {
             self.set_status(db, 2, 3).await?;
-            return Ok(());
+            return Ok(Some(payee_wallet));
         }
 
         Err(HTTPError::new(
@@ -910,10 +915,45 @@ impl Transaction {
 
         Ok(res)
     }
+
+    pub async fn first_from_system(
+        db: &scylladb::ScyllaDB,
+        payee: xid::Id,
+    ) -> anyhow::Result<Self> {
+        let fields = Self::select_fields(vec!["payload".to_string()], true)?;
+        let query = format!(
+                    "SELECT {} FROM transaction WHERE payee=? AND uid=? AND kind=? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
+                    fields.clone().join(",")
+                );
+        let params = (
+            payee.to_cql(),
+            SYS_ID.to_cql(),
+            TransactionKind::Award.as_ref(),
+            100_i32,
+        );
+
+        let mut rows = db.execute_iter(query, params).await?;
+        if rows.is_empty() {
+            return Err(HTTPError::new(404, format!("No award transaction for {}", payee)).into());
+        } else if rows.len() >= 100 {
+            return Err(
+                HTTPError::new(500, format!("Too many award transactions for {}", payee)).into(),
+            );
+        }
+
+        let mut cols = ColumnsMap::with_capacity(fields.len());
+        let mut doc = Self::default();
+        cols.fill(rows.pop().unwrap(), &fields)?;
+        doc.fill(&cols);
+
+        Ok(doc)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use faster_hex::hex_string;
+
     use crate::conf;
 
     use super::*;
@@ -1291,6 +1331,7 @@ mod tests {
         let mac = HMacTag::new([1u8; 32]);
         let payee = xid::new();
         let mut sys_wallet: Wallet = Default::default();
+        let mut first_txn: Transaction = Default::default();
         // make sure system wallet exists.
         {
             let mut wallet: Wallet = Default::default();
@@ -1367,6 +1408,8 @@ mod tests {
             assert_eq!(100, payee_wallet.award);
             assert_eq!(100, payee_wallet.balance());
             assert_eq!(1, payee_wallet.sequence);
+
+            first_txn = txn;
         }
 
         // prepare and cancel
@@ -1581,6 +1624,24 @@ mod tests {
             assert_eq!(70, sub_payee_wallet.balance());
             assert_eq!(71, sub_payee_wallet.credits);
             assert_eq!(1, sub_payee_wallet.sequence);
+        }
+
+        {
+            println!(
+                "first_txn: {}, {}",
+                hex_string(first_txn.id.as_bytes()),
+                hex_string(first_txn.payee.as_bytes())
+            );
+            let mut txn: Transaction = Default::default();
+            txn.prepare(&db, &mac, first_txn.payee, TransactionKind::Award, 1000)
+                .await
+                .unwrap();
+            txn.commit(&db, &mac).await.unwrap();
+
+            let first = Transaction::first_from_system(&db, first_txn.payee)
+                .await
+                .unwrap();
+            assert_eq!(first_txn.id, first.id);
         }
     }
 }

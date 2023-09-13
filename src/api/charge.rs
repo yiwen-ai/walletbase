@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::{str::FromStr, sync::Arc, vec};
 use validator::Validate;
 
-use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_to_vec, PackObject};
+use axum_web::{context::ReqContext, object::cbor_from_slice};
 use scylla_orm::ColumnsMap;
 
 use crate::api::{
@@ -390,12 +390,100 @@ pub async fn complete(
         doc.quantity,
     )
     .await?;
-    txn.commit(&app.scylla, &app.mac).await?;
+    let wallet = txn.commit(&app.scylla, &app.mac).await?;
 
     let mut cols = ColumnsMap::with_capacity(2);
     cols.set_as("status", &3i8);
     cols.set_as("txn", &txn.id);
     doc.update(&app.scylla, cols, 2i8).await?;
 
+    if wallet.map(|w| w.credits == 0) == Some(true) {
+        tokio::spawn(award_first_topup(
+            app,
+            ReqContext::new(ctx.rid.clone(), uid, 0),
+            txn.id,
+        ));
+    }
+
     Ok(to.with(SuccessResponse::new(ChargeOutput::from(doc, &to))))
+}
+
+#[derive(Deserialize)]
+struct AwardPayload {
+    pub referrer: Option<PackObject<xid::Id>>,
+}
+
+async fn award_first_topup(app: Arc<AppState>, ctx: ReqContext, txn: xid::Id) {
+    let res: anyhow::Result<()> = async {
+        let mut credit = db::Credit::with_pk(ctx.user, txn);
+        credit.kind = db::CreditKind::Award.to_string();
+        credit.amount = 10;
+        let res = credit.save(&app.scylla).await;
+        ctx.set("init_credits", res.is_ok().into()).await;
+
+        if res.is_ok() {
+            let tx0 = db::Transaction::first_from_system(&app.scylla, ctx.user).await?;
+            if let Ok(payload) = cbor_from_slice::<AwardPayload>(&tx0.payload) {
+                if let Some(referrer) = payload.referrer {
+                    ctx.set("referrer", referrer.to_string().into()).await;
+                    let mut wallet = db::Wallet::with_pk(referrer.unwrap());
+                    wallet.get_one(&app.scylla).await?;
+                    if wallet.credits > 0 {
+                        let mut txn = db::Transaction {
+                            description: "Referral reward".to_string(),
+                            payload: cbor_to_vec(&TransactionPayload {
+                                kind: "transaction".to_string(),
+                                id: PackObject::Cbor(txn),
+                                provider: None,
+                                currency: None,
+                                amount: None,
+                            })
+                            .unwrap_or_default(),
+                            ..Default::default()
+                        };
+
+                        txn.prepare(
+                            &app.scylla,
+                            &app.mac,
+                            wallet.uid,
+                            db::TransactionKind::Award,
+                            50,
+                        )
+                        .await?;
+                        txn.commit(&app.scylla, &app.mac).await?;
+                        ctx.set("award_txn", txn.id.to_string().into()).await;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    .await;
+
+    let kv = ctx.get_kv().await;
+    let elapsed = ctx.start.elapsed().as_millis() as u64;
+    match res {
+        Ok(_) => {
+            log::info!(target: "async_jobs",
+                action = "award_first_topup",
+                rid = ctx.rid,
+                uid = ctx.user.to_string(),
+                start = ctx.unix_ms,
+                elapsed = elapsed,
+                kv = log::as_serde!(kv);
+                "",
+            );
+        }
+        Err(err) => {
+            log::error!(target: "async_jobs",
+                action = "award_first_topup",
+                rid = ctx.rid,
+                uid = ctx.user.to_string(),
+                start = ctx.unix_ms,
+                elapsed= elapsed,
+                kv = log::as_serde!(kv);
+                "{}", err.to_string(),
+            );
+        }
+    }
 }

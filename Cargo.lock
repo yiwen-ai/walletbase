@@ -580,6 +580,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "faster-hex"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "239f7bfb930f820ab16a9cd95afc26f88264cf6905c960b340a615384aa3338a"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "fiat-crypto"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2512,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "walletbase"
-version = "0.4.3"
+version = "0.5.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2528,6 +2537,7 @@ dependencies = [
  "coset",
  "dotenvy",
  "ed25519-dalek",
+ "faster-hex",
  "futures",
  "futures-util",
  "hmac",

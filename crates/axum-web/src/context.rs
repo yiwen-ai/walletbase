@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 pub use structured_logger::unix_ms;
 
+#[derive(Debug)]
 pub struct ReqContext {
     pub rid: String,   // from x-request-id header
     pub user: xid::Id, // from x-auth-user header
@@ -20,15 +21,22 @@ pub struct ReqContext {
 }
 
 impl ReqContext {
-    pub fn new(rid: &str, user: xid::Id, rating: i8) -> Self {
+    pub fn new(rid: String, user: xid::Id, rating: i8) -> Self {
         Self {
-            rid: rid.to_string(),
+            rid,
             user,
             rating,
             unix_ms: unix_ms(),
             start: Instant::now(),
             kv: RwLock::new(BTreeMap::new()),
         }
+    }
+
+    pub async fn get_kv(&self) -> BTreeMap<String, Value> {
+        let kv = self.kv.read().await;
+        kv.clone()
+        // let mut res: BTreeMap<String, Value> = BTreeMap::with_capacity(kv.len());
+        // res
     }
 
     pub async fn set(&self, key: &str, value: Value) {
@@ -55,7 +63,7 @@ pub async fn middleware<B>(mut req: Request<B>, next: Next<B>) -> Response {
 
     let uid = xid::Id::from_str(&user).unwrap_or_default();
 
-    let ctx = Arc::new(ReqContext::new(&rid, uid, rating));
+    let ctx = Arc::new(ReqContext::new(rid.clone(), uid, rating));
     req.extensions_mut().insert(ctx.clone());
 
     let res = next.run(req).await;

@@ -103,8 +103,11 @@ pub struct Pagination {
 pub struct TransactionPayload {
     pub kind: String,
     pub id: PackObject<xid::Id>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub amount: Option<i64>,
 }
 
