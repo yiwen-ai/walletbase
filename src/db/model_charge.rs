@@ -252,8 +252,8 @@ impl Charge {
                     fields.clone().join(","));
             let params = (
                 uid.to_cql(),
-                token.to_cql(),
                 status.unwrap(),
+                token.to_cql(),
                 page_size as i32,
             );
             db.execute_iter(query, params).await?

@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS transaction (
 
 CREATE INDEX transaction_payee ON transaction (payee);
 CREATE INDEX transaction_sub_payee ON transaction (sub_payee);
-CREATE INDEX transaction_uid_status ON transaction ((uid), kind);
+CREATE INDEX transaction_uid_kind ON transaction ((uid), kind);
 
 CREATE TABLE IF NOT EXISTS credit (
     uid         BLOB,    -- user id
