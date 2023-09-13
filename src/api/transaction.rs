@@ -10,10 +10,11 @@ use axum_web::context::ReqContext;
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::PackObject;
 
-use crate::api::{
-    get_fields, token_from_xid, token_to_xid, AppState, Pagination, QueryUidId,
-};
 use crate::db;
+use crate::{
+    api::{get_fields, token_from_xid, token_to_xid, AppState, Pagination, QueryUidId},
+    db::TransactionKind,
+};
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct TransactionOutput {
@@ -22,6 +23,8 @@ pub struct TransactionOutput {
     pub payee: PackObject<xid::Id>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub_payee: Option<PackObject<xid::Id>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payer: Option<PackObject<xid::Id>>,
     pub status: i8,
     pub kind: String,
     pub amount: i64,
@@ -40,12 +43,20 @@ impl TransactionOutput {
             sequence: val.sequence,
             payee: to.with(val.payee),
             status: val.status,
-            kind: val.kind,
+            kind: val.kind.clone(),
             amount: val.amount,
             sys_fee: val.sys_fee,
             sub_shares: val.sub_shares,
             ..Default::default()
         };
+
+        match TransactionKind::from_str(&val.kind) {
+            Ok(TransactionKind::Award)
+            | Ok(TransactionKind::Topup)
+            | Ok(TransactionKind::Sponsor)
+            | Ok(TransactionKind::Subscribe) => rt.payer = to.with_option(Some(val.uid)),
+            _ => {}
+        }
 
         for v in val._fields {
             match v.as_str() {

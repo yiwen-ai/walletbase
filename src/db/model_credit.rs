@@ -7,7 +7,7 @@ use axum_web::erring::HTTPError;
 use scylla_orm::{ColumnsMap, CqlValue, ToCqlVal};
 use scylla_orm_macros::CqlOrm;
 
-use super::{Wallet, SYS_ID};
+use super::{Wallet, MAX_ID, SYS_ID};
 use crate::db::scylladb::{self, extract_applied};
 
 #[derive(AsRefStr, Debug, EnumString, PartialEq)]
@@ -215,41 +215,28 @@ impl Credit {
     ) -> anyhow::Result<Vec<Self>> {
         let fields = Self::select_fields(select_fields, true)?;
 
-        let rows = if let Some(id) = page_token {
-            if kind.is_none() {
-                let query = format!(
-                    "SELECT {} FROM credit WHERE uid=? AND txn<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
-                let params = (uid.to_cql(), id.to_cql(), page_size as i32);
-                db.execute_iter(query, params).await?
-            } else {
-                let query = format!(
-                    "SELECT {} FROM credit WHERE uid=? AND kind=? AND txn<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
-                    fields.clone().join(","));
-                let params = (
-                    uid.to_cql(),
-                    id.to_cql(),
-                    kind.unwrap().to_string(),
-                    page_size as i32,
-                );
-                db.execute_iter(query, params).await?
-            }
-        } else if kind.is_none() {
-            let query = scylladb::Query::new(format!(
-                "SELECT {} FROM credit WHERE uid=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+        let token = match page_token {
+            Some(id) => id,
+            None => MAX_ID,
+        };
+
+        let rows = if kind.is_none() {
+            let query = format!(
+                "SELECT {} FROM credit WHERE uid=? AND txn<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
                 fields.clone().join(",")
-            ))
-            .with_page_size(page_size as i32);
-            let params = (uid.to_cql(), page_size as i32);
+            );
+            let params = (uid.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         } else {
-            let query = scylladb::Query::new(format!(
-                "SELECT {} FROM credit WHERE uid=? AND kind=? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
-                fields.clone().join(",")
-            ))
-            .with_page_size(page_size as i32);
-            let params = (uid.as_bytes(), kind.unwrap().to_string(), page_size as i32);
+            let query = format!(
+                    "SELECT {} FROM credit WHERE uid=? AND kind=? AND txn<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                    fields.clone().join(","));
+            let params = (
+                uid.to_cql(),
+                token.to_cql(),
+                kind.unwrap().to_string(),
+                page_size as i32,
+            );
             db.execute_iter(query, params).await?
         };
 

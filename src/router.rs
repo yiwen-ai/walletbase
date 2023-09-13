@@ -30,6 +30,7 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
             "/v1/wallet",
             Router::new()
                 .route("/", routing::get(api::wallet::get))
+                .route("/list_credits", routing::post(api::wallet::list_credits))
                 .route("/award", routing::post(api::wallet::award))
                 .route("/spend", routing::post(api::wallet::spend))
                 .route("/sponsor", routing::post(api::wallet::sponsor))

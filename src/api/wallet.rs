@@ -12,7 +12,7 @@ use axum_web::object::PackObject;
 
 use crate::db;
 use crate::{
-    api::{AppState, QueryUid},
+    api::{token_from_xid, token_to_xid, AppState, Pagination, QueryUid},
     db::SYS_ID,
 };
 
@@ -58,6 +58,67 @@ pub async fn get(
     ctx.set("exists", res.is_ok().into()).await;
 
     Ok(to.with(SuccessResponse::new(WalletOutput::from(doc, &to))))
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct CreditOutput {
+    pub txn: PackObject<xid::Id>,
+    pub kind: String,
+    pub amount: i64,
+    pub description: String,
+}
+
+impl CreditOutput {
+    pub fn from<T>(val: db::Credit, to: &PackObject<T>) -> Self {
+        Self {
+            txn: to.with(val.txn),
+            kind: val.kind,
+            amount: val.amount,
+            description: val.description,
+        }
+    }
+}
+
+pub async fn list_credits(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<Pagination>,
+) -> Result<PackObject<SuccessResponse<Vec<CreditOutput>>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
+
+    let page_size = input.page_size.unwrap_or(10);
+    ctx.set_kvs(vec![
+        ("action", "list_credit".into()),
+        ("uid", input.uid.to_string().into()),
+        ("page_size", page_size.into()),
+    ])
+    .await;
+
+    let fields = input.fields.unwrap_or_default();
+    let res = db::Credit::list(
+        &app.scylla,
+        input.uid.unwrap(),
+        fields,
+        page_size,
+        token_to_xid(&input.page_token),
+        None,
+    )
+    .await?;
+    let next_page_token = if res.len() >= page_size as usize {
+        to.with_option(token_from_xid(res.last().unwrap().txn))
+    } else {
+        None
+    };
+
+    Ok(to.with(SuccessResponse {
+        total_size: None,
+        next_page_token,
+        result: res
+            .iter()
+            .map(|r| CreditOutput::from(r.to_owned(), &to))
+            .collect(),
+    }))
 }
 
 #[derive(Debug, Deserialize, Validate)]
