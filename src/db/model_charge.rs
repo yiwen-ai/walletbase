@@ -61,6 +61,10 @@ impl Charge {
         if !select_fields.contains(&field) {
             select_fields.push(field);
         }
+        let field = "expire_at".to_string();
+        if !select_fields.contains(&field) {
+            select_fields.push(field);
+        }
         if with_pk {
             let field = "uid".to_string();
             if !select_fields.contains(&field) {

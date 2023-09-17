@@ -8,7 +8,10 @@ use validator::Validate;
 
 use axum_web::erring::{HTTPError, SuccessResponse};
 use axum_web::object::{cbor_to_vec, PackObject};
-use axum_web::{context::ReqContext, object::cbor_from_slice};
+use axum_web::{
+    context::{unix_ms, ReqContext},
+    object::cbor_from_slice,
+};
 use scylla_orm::ColumnsMap;
 
 use crate::api::{
@@ -166,6 +169,11 @@ pub async fn get(
     let mut doc = db::Charge::with_pk(uid, id);
     doc.get_one(&app.scylla, get_fields(input.fields.clone()))
         .await?;
+    let now = unix_ms() as i64;
+    if doc.status == 1 && doc.expire_at > 0 && doc.expire_at <= now {
+        doc.status = -2;
+        doc.failure_msg = "checkout.expired".to_string();
+    }
     Ok(to.with(SuccessResponse::new(ChargeOutput::from(doc, &to))))
 }
 
@@ -186,7 +194,7 @@ pub async fn list(
     .await;
 
     let fields = input.fields.unwrap_or_default();
-    let res = db::Charge::list(
+    let mut res = db::Charge::list(
         &app.scylla,
         input.uid.unwrap(),
         fields,
@@ -200,6 +208,14 @@ pub async fn list(
     } else {
         None
     };
+
+    let now = unix_ms() as i64;
+    for doc in res.iter_mut() {
+        if doc.status == 1 && doc.expire_at > 0 && doc.expire_at <= now {
+            doc.status = -2;
+            doc.failure_msg = "checkout.expired".to_string();
+        }
+    }
 
     Ok(to.with(SuccessResponse {
         total_size: None,
