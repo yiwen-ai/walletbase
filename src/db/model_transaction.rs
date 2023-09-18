@@ -789,14 +789,14 @@ impl Transaction {
 
         let rows = if kind.is_none() {
             let query = format!(
-                    "SELECT {} FROM transaction WHERE uid=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
+                "SELECT {} FROM transaction WHERE uid=? AND id<? LIMIT ? USING TIMEOUT 3s",
+                fields.clone().join(",")
+            );
             let params = (uid.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         } else {
             let query = format!(
-                    "SELECT {} FROM transaction WHERE uid=? AND kind=? AND id<? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM transaction WHERE uid=? AND kind=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 uid.to_cql(),
@@ -837,14 +837,14 @@ impl Transaction {
 
         let rows = if kind.is_none() {
             let query = format!(
-                    "SELECT {} FROM transaction WHERE payee=? AND id<? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM transaction WHERE payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(",")
                 );
             let params = (payee.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         } else {
             let query = format!(
-                    "SELECT {} FROM transaction WHERE payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM transaction WHERE payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 payee.to_cql(),
@@ -885,14 +885,14 @@ impl Transaction {
 
         let rows = if kind.is_none() {
             let query = format!(
-                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(",")
                 );
             let params = (sub_payee.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         } else {
             let query = format!(
-                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
+                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 sub_payee.to_cql(),

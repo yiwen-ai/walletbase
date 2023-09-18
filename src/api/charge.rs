@@ -170,7 +170,7 @@ pub async fn get(
     doc.get_one(&app.scylla, get_fields(input.fields.clone()))
         .await?;
     let now = unix_ms() as i64;
-    if doc.status == 1 && doc.expire_at > 0 && doc.expire_at <= now {
+    if (doc.status == 0 || doc.status == 1) && doc.expire_at > 0 && doc.expire_at <= now {
         doc.status = -2;
         doc.failure_msg = "checkout.expired".to_string();
     }
@@ -211,7 +211,7 @@ pub async fn list(
 
     let now = unix_ms() as i64;
     for doc in res.iter_mut() {
-        if doc.status == 1 && doc.expire_at > 0 && doc.expire_at <= now {
+        if (doc.status == 0 || doc.status == 1) && doc.expire_at > 0 && doc.expire_at <= now {
             doc.status = -2;
             doc.failure_msg = "checkout.expired".to_string();
         }
@@ -386,7 +386,7 @@ pub async fn complete(
     }
 
     let mut txn = db::Transaction {
-        description: format!("Top up with {}", doc.provider),
+        description: format!("{}.topup", doc.provider),
         payload: cbor_to_vec(&TransactionPayload {
             kind: "charge".to_string(),
             id: PackObject::Cbor(doc.id),

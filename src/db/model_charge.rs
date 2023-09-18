@@ -245,15 +245,16 @@ impl Charge {
 
         let rows = if status.is_none() {
             let query = format!(
-                "SELECT {} FROM charge WHERE uid=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
+                "SELECT {} FROM charge WHERE uid=? AND id<? LIMIT ? USING TIMEOUT 3s",
                 fields.clone().join(",")
             );
             let params = (uid.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         } else {
             let query = format!(
-                    "SELECT {} FROM charge WHERE uid=? AND status=? AND id<? LIMIT ? BYPASS CACHE USING TIMEOUT 3s",
-                    fields.clone().join(","));
+                "SELECT {} FROM charge WHERE uid=? AND status=? AND id<? LIMIT ? USING TIMEOUT 3s",
+                fields.clone().join(",")
+            );
             let params = (
                 uid.to_cql(),
                 status.unwrap(),
