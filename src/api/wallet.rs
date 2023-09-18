@@ -172,6 +172,7 @@ pub async fn award(
         let mut credit = db::Credit::with_pk(payee, txn.id);
         credit.kind = db::CreditKind::Award.to_string();
         credit.amount = input.credits as i64;
+        credit.description = "payee.award".to_string();
         credit.save(&app.scylla).await?;
         ctx.set("credits", input.credits.into()).await;
     }

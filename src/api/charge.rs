@@ -434,6 +434,7 @@ async fn award_first_topup(app: Arc<AppState>, ctx: ReqContext, txn: xid::Id) {
         let mut credit = db::Credit::with_pk(ctx.user, txn);
         credit.kind = db::CreditKind::Award.to_string();
         credit.amount = 10;
+        credit.description = "member.active".to_string();
         let res = credit.save(&app.scylla).await;
         ctx.set("init_credits", res.is_ok().into()).await;
 

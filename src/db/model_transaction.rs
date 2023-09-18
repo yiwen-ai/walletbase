@@ -343,7 +343,7 @@ impl Transaction {
                     txn: self.id,
                     kind: CreditKind::Payout.to_string(),
                     amount: self.amount,
-                    description: self.description.clone(),
+                    description: format!("payer.{}", self.kind),
                     ..Default::default()
                 });
             }
@@ -357,7 +357,7 @@ impl Transaction {
                     txn: self.id,
                     kind: CreditKind::Income.to_string(),
                     amount: self.amount - self.sys_fee - self.sub_shares,
-                    description: self.description.clone(),
+                    description: format!("payee.{}", self.kind),
                     ..Default::default()
                 });
 
@@ -367,7 +367,7 @@ impl Transaction {
                         txn: self.id,
                         kind: CreditKind::Income.to_string(),
                         amount: self.sub_shares,
-                        description: self.description.clone(),
+                        description: format!("sub_payee.{}", self.kind),
                         ..Default::default()
                     });
                 }
