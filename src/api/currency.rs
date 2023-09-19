@@ -32,7 +32,7 @@ impl FromStr for Currency {
 // https://en.wikipedia.org/wiki/Template:Most_traded_currencies
 // https://www.iban.com/currency-codes
 // https://github.com/yiwen-ai/countries
-pub const CURRENCIES: [Currency; 11] = [
+pub const CURRENCIES: [Currency; 12] = [
     Currency {
         name: "港幣",
         alpha: "HKD",
@@ -99,12 +99,12 @@ pub const CURRENCIES: [Currency; 11] = [
         decimals: 0,
         code: 410,
     },
-    // Currency {
-    //     name: "рубль",
-    //     alpha: "RUB",
-    //     decimals: 2,
-    //     code: 643,
-    // },
+    Currency {
+        name: "рубль",
+        alpha: "RUB",
+        decimals: 2,
+        code: 643,
+    },
 ];
 
 pub async fn currencies(

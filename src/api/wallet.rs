@@ -153,6 +153,8 @@ pub async fn award(
     let mut txn: db::Transaction = Default::default();
     if let Some(description) = input.description {
         txn.description = description;
+    } else {
+        txn.description = "payee.award".to_string();
     }
     if let Some(payload) = input.payload {
         txn.payload = payload.unwrap();
@@ -172,7 +174,7 @@ pub async fn award(
         let mut credit = db::Credit::with_pk(payee, txn.id);
         credit.kind = db::CreditKind::Award.to_string();
         credit.amount = input.credits as i64;
-        credit.description = "payee.award".to_string();
+        credit.description = txn.description;
         credit.save(&app.scylla).await?;
         ctx.set("credits", input.credits.into()).await;
     }

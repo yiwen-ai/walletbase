@@ -341,6 +341,8 @@ pub async fn complete(
         ("action", "complete_charge".into()),
         ("uid", uid.to_string().into()),
         ("id", id.to_string().into()),
+        ("currency", input.currency.clone().into()),
+        ("amount", input.amount.clone().into()),
     ])
     .await;
 
@@ -419,6 +421,15 @@ pub async fn complete(
             ReqContext::new(ctx.rid.clone(), uid, 0),
             txn.id,
         ));
+    }
+
+    if let Ok(cur) = Currency::from_str(&input.currency) {
+        let amount = input.amount as f32 / 10f32.powi(cur.decimals as i32);
+        ctx.set(
+            "message",
+            format!("{:.2} {}", amount.to_string(), cur.name).into(),
+        )
+        .await;
     }
 
     Ok(to.with(SuccessResponse::new(ChargeOutput::from(doc, &to))))
