@@ -242,15 +242,11 @@ impl TransactionKind {
             TransactionKind::Sponsor | TransactionKind::Subscribe => {
                 let rate = income_fee_rate(credits);
                 let mut sys_fee = (amount as f32 * rate) as i64;
+
+                let sub_shares = if has_sub_payee { sys_fee } else { 0 };
                 if sys_fee < 1 {
                     sys_fee = 1;
                 }
-
-                let sub_shares = if has_sub_payee {
-                    (amount - sys_fee) / 2
-                } else {
-                    0
-                };
                 (sys_fee, sub_shares)
             }
             _ => (0i64, 0i64),
@@ -952,7 +948,7 @@ impl Transaction {
 
 #[cfg(test)]
 mod tests {
-    use faster_hex::hex_string;
+    // use faster_hex::hex_string;
 
     use crate::conf;
 
@@ -1302,23 +1298,23 @@ mod tests {
                 TransactionKind::Subscribe.fee_and_shares(1, 10000, true)
             );
             assert_eq!(
-                (30i64, 35i64),
+                (30i64, 30i64),
                 TransactionKind::Sponsor.fee_and_shares(100, 9999, true)
             );
             assert_eq!(
-                (27i64, 36i64),
+                (27i64, 27i64),
                 TransactionKind::Subscribe.fee_and_shares(100, 10000, true)
             );
             assert_eq!(
-                (24i64, 38i64),
+                (24i64, 24i64),
                 TransactionKind::Subscribe.fee_and_shares(100, 100000, true)
             );
             assert_eq!(
-                (15i64, 42i64),
+                (15i64, 15i64),
                 TransactionKind::Subscribe.fee_and_shares(100, 100000000, true)
             );
             assert_eq!(
-                (15i64, 43i64),
+                (15i64, 15i64),
                 TransactionKind::Subscribe.fee_and_shares(101, 100000000, true)
             );
         }
@@ -1601,9 +1597,9 @@ mod tests {
             assert_eq!(3, credits.len());
             assert_eq!(200, credits[0].amount);
             assert_eq!("payout", credits[0].kind);
-            assert_eq!(70, credits[1].amount);
+            assert_eq!(80, credits[1].amount);
             assert_eq!("income", credits[1].kind);
-            assert_eq!(70, credits[2].amount);
+            assert_eq!(60, credits[2].amount);
             assert_eq!("income", credits[2].kind);
             Credit::save_all(&db, &mut credits).await.unwrap();
 
@@ -1614,24 +1610,24 @@ mod tests {
             assert_eq!(3, payer_wallet.sequence);
 
             assert!(payee_wallet.get_one(&db).await.is_ok());
-            assert_eq!(140, payee_wallet.income);
-            assert_eq!(140, payee_wallet.balance());
-            assert_eq!(80, payee_wallet.credits);
+            assert_eq!(150, payee_wallet.income);
+            assert_eq!(150, payee_wallet.balance());
+            assert_eq!(90, payee_wallet.credits);
             assert_eq!(2, payee_wallet.sequence);
 
             assert!(sub_payee_wallet.get_one(&db).await.is_ok());
-            assert_eq!(70, sub_payee_wallet.income);
-            assert_eq!(70, sub_payee_wallet.balance());
-            assert_eq!(71, sub_payee_wallet.credits);
+            assert_eq!(60, sub_payee_wallet.income);
+            assert_eq!(60, sub_payee_wallet.balance());
+            assert_eq!(61, sub_payee_wallet.credits);
             assert_eq!(1, sub_payee_wallet.sequence);
         }
 
         {
-            println!(
-                "first_txn: {}, {}",
-                hex_string(first_txn.id.as_bytes()),
-                hex_string(first_txn.payee.as_bytes())
-            );
+            // println!(
+            //     "first_txn: {}, {}",
+            //     hex_string(first_txn.id.as_bytes()),
+            //     hex_string(first_txn.payee.as_bytes())
+            // );
             let mut txn: Transaction = Default::default();
             txn.prepare(&db, &mac, first_txn.payee, TransactionKind::Award, 1000)
                 .await

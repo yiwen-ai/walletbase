@@ -28,12 +28,14 @@ pub struct Wallet {
 pub fn income_fee_rate(credits: i64) -> f32 {
     match credits {
         ..=9999 => 0.3,
-        10000..=99999 => 0.27,         // LV4
-        100000..=999999 => 0.24,       // LV5
-        1000000..=9999999 => 0.21,     // LV6
-        10000000..=99999999 => 0.18,   // LV7
-        100000000..=999999999 => 0.15, // LV8
-        _ => 0.15,
+        10000..=99999 => 0.27,             // LV4
+        100000..=999999 => 0.24,           // LV5
+        1000000..=9999999 => 0.21,         // LV6
+        10000000..=99999999 => 0.18,       // LV7
+        100000000..=999999999 => 0.15,     // LV8
+        1000000000..=9999999999 => 0.12,   // LV9
+        10000000000..=99999999999 => 0.09, // LV10
+        _ => 0.09,
     }
 }
 
@@ -191,7 +193,11 @@ mod tests {
         assert_eq!(0.18f32, income_fee_rate(99999999));
         assert_eq!(0.15f32, income_fee_rate(99999999 + 1));
         assert_eq!(0.15f32, income_fee_rate(999999999));
-        assert_eq!(0.15f32, income_fee_rate(999999999 + 1));
+        assert_eq!(0.12f32, income_fee_rate(999999999 + 1));
+        assert_eq!(0.12f32, income_fee_rate(9999999999));
+        assert_eq!(0.09f32, income_fee_rate(9999999999 + 1));
+        assert_eq!(0.09f32, income_fee_rate(99999999999));
+        assert_eq!(0.09f32, income_fee_rate(99999999999 + 1));
     }
 
     #[tokio::test(flavor = "current_thread")]
