@@ -237,6 +237,56 @@ pub async fn spend(
     Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
 }
 
+// the txn is not committed, it should be committed or cancelled by the caller
+// returns payer's wallet
+pub async fn subscribe(
+    State(app): State<Arc<AppState>>,
+    Extension(ctx): Extension<Arc<ReqContext>>,
+    to: PackObject<SpendInput>,
+) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
+    let (to, input) = to.unpack();
+    input.validate()?;
+
+    let uid = input.uid.unwrap();
+    if input.payee.is_none() {
+        return Err(HTTPError::new(400, "payee is required".to_string()));
+    }
+    let payee = *input.payee.unwrap();
+    ctx.set_kvs(vec![
+        ("action", "subscribe".into()),
+        ("payer", uid.to_string().into()),
+        ("payee", payee.to_string().into()),
+        ("amount", input.amount.into()),
+    ])
+    .await;
+
+    let mut txn = db::Transaction::with_uid(uid);
+    if let Some(description) = input.description {
+        txn.description = description;
+    }
+    if let Some(payload) = input.payload {
+        txn.payload = payload.unwrap();
+    }
+    if let Some(sub_payee) = input.sub_payee {
+        ctx.set("sub_payee", sub_payee.to_string().into()).await;
+        txn.sub_payee = Some(sub_payee.unwrap());
+    }
+
+    txn.prepare(
+        &app.scylla,
+        &app.mac,
+        payee,
+        db::TransactionKind::Subscribe,
+        input.amount,
+    )
+    .await?;
+
+    let mut wallet = db::Wallet::with_pk(uid);
+    wallet.get_one(&app.scylla).await?;
+    wallet.txn = txn.id; // txn.id may be not the walllet.txn, return the txn.id to the caller
+    Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
+}
+
 // the txn is committed.
 // returns payer's wallet
 pub async fn sponsor(
@@ -277,60 +327,6 @@ pub async fn sponsor(
         &app.mac,
         payee,
         db::TransactionKind::Sponsor,
-        input.amount,
-    )
-    .await?;
-    txn.commit(&app.scylla, &app.mac).await?;
-
-    let mut credits = txn.credits();
-    db::Credit::save_all(&app.scylla, &mut credits).await?;
-
-    let mut wallet = db::Wallet::with_pk(uid);
-    wallet.get_one(&app.scylla).await?;
-    wallet.txn = txn.id; // txn.id may be not the walllet.txn, return the txn.id to the caller
-    Ok(to.with(SuccessResponse::new(WalletOutput::from(wallet, &to))))
-}
-
-// the txn is committed.
-// returns payer's wallet
-pub async fn subscribe(
-    State(app): State<Arc<AppState>>,
-    Extension(ctx): Extension<Arc<ReqContext>>,
-    to: PackObject<SpendInput>,
-) -> Result<PackObject<SuccessResponse<WalletOutput>>, HTTPError> {
-    let (to, input) = to.unpack();
-    input.validate()?;
-
-    let uid = input.uid.unwrap();
-    if input.payee.is_none() {
-        return Err(HTTPError::new(400, "payee is required".to_string()));
-    }
-    let payee = *input.payee.unwrap();
-    ctx.set_kvs(vec![
-        ("action", "subscribe".into()),
-        ("payer", uid.to_string().into()),
-        ("payee", payee.to_string().into()),
-        ("amount", input.amount.into()),
-    ])
-    .await;
-
-    let mut txn = db::Transaction::with_uid(uid);
-    if let Some(description) = input.description {
-        txn.description = description;
-    }
-    if let Some(payload) = input.payload {
-        txn.payload = payload.unwrap();
-    }
-    if let Some(sub_payee) = input.sub_payee {
-        ctx.set("sub_payee", sub_payee.to_string().into()).await;
-        txn.sub_payee = Some(sub_payee.unwrap());
-    }
-
-    txn.prepare(
-        &app.scylla,
-        &app.mac,
-        payee,
-        db::TransactionKind::Subscribe,
         input.amount,
     )
     .await?;
