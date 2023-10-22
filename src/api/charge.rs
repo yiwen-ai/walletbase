@@ -342,7 +342,7 @@ pub async fn complete(
         ("uid", uid.to_string().into()),
         ("id", id.to_string().into()),
         ("currency", input.currency.clone().into()),
-        ("amount", input.amount.clone().into()),
+        ("amount", input.amount.into()),
     ])
     .await;
 

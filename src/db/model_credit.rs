@@ -220,23 +220,23 @@ impl Credit {
             None => MAX_ID,
         };
 
-        let rows = if kind.is_none() {
-            let query = format!(
-                "SELECT {} FROM credit WHERE uid=? AND txn<? LIMIT ? USING TIMEOUT 3s",
-                fields.clone().join(",")
-            );
-            let params = (uid.to_cql(), token.to_cql(), page_size as i32);
-            db.execute_iter(query, params).await?
-        } else {
+        let rows = if let Some(kind) = kind {
             let query = format!(
                     "SELECT {} FROM credit WHERE uid=? AND kind=? AND txn<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 uid.to_cql(),
                 token.to_cql(),
-                kind.unwrap().to_string(),
+                kind.to_string(),
                 page_size as i32,
             );
+            db.execute_iter(query, params).await?
+        } else {
+            let query = format!(
+                "SELECT {} FROM credit WHERE uid=? AND txn<? LIMIT ? USING TIMEOUT 3s",
+                fields.clone().join(",")
+            );
+            let params = (uid.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         };
 

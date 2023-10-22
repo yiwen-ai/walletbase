@@ -123,12 +123,11 @@ pub async fn exec_cqls(db: &ScyllaDB, cqls: &str) -> anyhow::Result<()> {
             .execute(cql.clone(), &[])
             .await
             .map_err(|err| anyhow::anyhow!("\ncql: {}\nerror: {}", &cql, &err));
-        if res.is_err() {
-            let res = res.unwrap_err();
-            if res.to_string().contains("Index already exists") {
-                println!("WARN: {}", res);
+        if let Err(err) = res {
+            if err.to_string().contains("Index already exists") {
+                println!("WARN: {}", err);
             } else {
-                return Err(res);
+                return Err(err);
             }
         }
     }

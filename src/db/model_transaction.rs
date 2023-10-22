@@ -125,7 +125,10 @@ impl TransactionKind {
             return Ok(());
         }
 
-        if wallet.credits == 0 && *self != TransactionKind::Spend {
+        if wallet.credits == 0
+            && self != &TransactionKind::Spend
+            && self != &TransactionKind::Subscribe
+        {
             return Err(HTTPError::new(
                 400,
                 format!("Require credits for {} transaction", self.as_ref()),
@@ -441,6 +444,9 @@ impl Transaction {
             )
             .into());
         }
+        if self.uid == payee {
+            return Err(HTTPError::new(400, format!("payee {} is same as payer", payee)).into());
+        }
 
         kind.check_payer(self.uid)?;
         kind.check_payee(payee)?;
@@ -746,14 +752,14 @@ impl Transaction {
 
         let (a, b, c) = join!(fut_payee, fut_sys, fut_sub);
         let mut errs: Vec<String> = Vec::new();
-        if a.is_err() {
-            errs.push(a.unwrap_err().to_string());
+        if let Err(err) = a {
+            errs.push(err.to_string());
         }
-        if b.is_err() {
-            errs.push(b.unwrap_err().to_string());
+        if let Err(err) = b {
+            errs.push(err.to_string());
         }
-        if c.is_err() {
-            errs.push(c.unwrap_err().to_string());
+        if let Err(err) = c {
+            errs.push(err.to_string());
         }
 
         if errs.is_empty() {
@@ -783,23 +789,23 @@ impl Transaction {
             None => MAX_ID,
         };
 
-        let rows = if kind.is_none() {
-            let query = format!(
-                "SELECT {} FROM transaction WHERE uid=? AND id<? LIMIT ? USING TIMEOUT 3s",
-                fields.clone().join(",")
-            );
-            let params = (uid.to_cql(), token.to_cql(), page_size as i32);
-            db.execute_iter(query, params).await?
-        } else {
+        let rows = if let Some(kind) = kind {
             let query = format!(
                     "SELECT {} FROM transaction WHERE uid=? AND kind=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 uid.to_cql(),
-                kind.unwrap().to_string(),
+                kind.to_string(),
                 token.to_cql(),
                 page_size as i32,
             );
+            db.execute_iter(query, params).await?
+        } else {
+            let query = format!(
+                "SELECT {} FROM transaction WHERE uid=? AND id<? LIMIT ? USING TIMEOUT 3s",
+                fields.clone().join(",")
+            );
+            let params = (uid.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         };
 
@@ -831,23 +837,23 @@ impl Transaction {
             None => MAX_ID,
         };
 
-        let rows = if kind.is_none() {
-            let query = format!(
-                    "SELECT {} FROM transaction WHERE payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
-            let params = (payee.to_cql(), token.to_cql(), page_size as i32);
-            db.execute_iter(query, params).await?
-        } else {
+        let rows = if let Some(kind) = kind {
             let query = format!(
                     "SELECT {} FROM transaction WHERE payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 payee.to_cql(),
                 token.to_cql(),
-                kind.unwrap().to_string(),
+                kind.to_string(),
                 page_size as i32,
             );
+            db.execute_iter(query, params).await?
+        } else {
+            let query = format!(
+                    "SELECT {} FROM transaction WHERE payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
+                    fields.clone().join(",")
+                );
+            let params = (payee.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         };
 
@@ -879,23 +885,23 @@ impl Transaction {
             None => MAX_ID,
         };
 
-        let rows = if kind.is_none() {
-            let query = format!(
-                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
-            let params = (sub_payee.to_cql(), token.to_cql(), page_size as i32);
-            db.execute_iter(query, params).await?
-        } else {
+        let rows = if let Some(kind) = kind {
             let query = format!(
                     "SELECT {} FROM transaction WHERE sub_payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
                     fields.clone().join(","));
             let params = (
                 sub_payee.to_cql(),
                 token.to_cql(),
-                kind.unwrap().to_string(),
+                kind.to_string(),
                 page_size as i32,
             );
+            db.execute_iter(query, params).await?
+        } else {
+            let query = format!(
+                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
+                    fields.clone().join(",")
+                );
+            let params = (sub_payee.to_cql(), token.to_cql(), page_size as i32);
             db.execute_iter(query, params).await?
         };
 
