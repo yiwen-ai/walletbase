@@ -258,6 +258,58 @@ impl TransactionKind {
 }
 
 #[derive(Debug, Default, Clone, CqlOrm)]
+pub struct PayeeTransaction {
+    pub payee: xid::Id,
+    pub txn: xid::Id,
+    pub uid: xid::Id,
+}
+
+impl PayeeTransaction {
+    pub fn new(payee: xid::Id, txn: xid::Id, uid: xid::Id) -> Self {
+        Self { payee, txn, uid }
+    }
+
+    pub async fn save(&self, db: &scylladb::ScyllaDB) -> anyhow::Result<bool> {
+        if self.payee == SYS_ID {
+            return Ok(false);
+        }
+
+        let query = "INSERT INTO payee_transaction (payee,txn,uid) VALUES (?,?,?) IF NOT EXISTS";
+        let params = (self.payee.to_cql(), self.txn.to_cql(), self.uid.to_cql());
+        let res = db.execute(query, params).await?;
+        Ok(extract_applied(res))
+    }
+
+    pub async fn list(
+        db: &scylladb::ScyllaDB,
+        payee: xid::Id,
+        page_size: u16,
+        page_token: Option<xid::Id>,
+    ) -> anyhow::Result<Vec<Self>> {
+        let token = match page_token {
+            Some(id) => id,
+            None => MAX_ID,
+        };
+
+        let query = "SELECT payee,txn,uid FROM payee_transaction WHERE payee=? AND txn<? LIMIT ? USING TIMEOUT 3s";
+        let params = (payee.to_cql(), token.to_cql(), page_size as i32);
+        let rows = db.execute_iter(query, params).await?;
+
+        let fields = vec!["payee".to_string(), "txn".to_string(), "uid".to_string()];
+        let mut res: Vec<Self> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut doc = Self::default();
+            let mut cols = ColumnsMap::with_capacity(3);
+            cols.fill(row, &fields)?;
+            doc.fill(&cols);
+            res.push(doc);
+        }
+
+        Ok(res)
+    }
+}
+
+#[derive(Debug, Default, Clone, CqlOrm)]
 pub struct Transaction {
     pub uid: xid::Id,
     pub id: xid::Id,
@@ -764,6 +816,14 @@ impl Transaction {
 
         if errs.is_empty() {
             self.set_status(db, 2, 3).await?;
+            let _ = PayeeTransaction::new(self.payee, self.id, self.uid)
+                .save(db)
+                .await;
+            if let Some(sub_payee) = self.sub_payee {
+                let _ = PayeeTransaction::new(sub_payee, self.id, self.uid)
+                    .save(db)
+                    .await;
+            }
             return Ok(Some(payee_wallet));
         }
 
@@ -828,86 +888,19 @@ impl Transaction {
         select_fields: Vec<String>,
         page_size: u16,
         page_token: Option<xid::Id>,
-        kind: Option<TransactionKind>,
     ) -> anyhow::Result<Vec<Self>> {
-        let fields = Self::select_fields(select_fields, true)?;
+        let fields = Self::select_fields(select_fields, false)?;
 
-        let token = match page_token {
-            Some(id) => id,
-            None => MAX_ID,
-        };
-
-        let rows = if let Some(kind) = kind {
-            let query = format!(
-                    "SELECT {} FROM transaction WHERE payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
-                    fields.clone().join(","));
-            let params = (
-                payee.to_cql(),
-                token.to_cql(),
-                kind.to_string(),
-                page_size as i32,
-            );
-            db.execute_iter(query, params).await?
-        } else {
-            let query = format!(
-                    "SELECT {} FROM transaction WHERE payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
-            let params = (payee.to_cql(), token.to_cql(), page_size as i32);
-            db.execute_iter(query, params).await?
-        };
-
-        let mut res: Vec<Self> = Vec::with_capacity(rows.len());
-        for row in rows {
-            let mut doc = Self::default();
-            let mut cols = ColumnsMap::with_capacity(fields.len());
-            cols.fill(row, &fields)?;
-            doc.fill(&cols);
-            doc._fields = fields.clone();
-            res.push(doc);
-        }
-
-        Ok(res)
-    }
-
-    pub async fn list_by_sub_payee(
-        db: &scylladb::ScyllaDB,
-        sub_payee: xid::Id,
-        select_fields: Vec<String>,
-        page_size: u16,
-        page_token: Option<xid::Id>,
-        kind: Option<TransactionKind>,
-    ) -> anyhow::Result<Vec<Self>> {
-        let fields = Self::select_fields(select_fields, true)?;
-
-        let token = match page_token {
-            Some(id) => id,
-            None => MAX_ID,
-        };
-
-        let rows = if let Some(kind) = kind {
-            let query = format!(
-                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? AND kind=? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
-                    fields.clone().join(","));
-            let params = (
-                sub_payee.to_cql(),
-                token.to_cql(),
-                kind.to_string(),
-                page_size as i32,
-            );
-            db.execute_iter(query, params).await?
-        } else {
-            let query = format!(
-                    "SELECT {} FROM transaction WHERE sub_payee=? AND id<? LIMIT ? ALLOW FILTERING USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
-            let params = (sub_payee.to_cql(), token.to_cql(), page_size as i32);
-            db.execute_iter(query, params).await?
-        };
-
-        let mut res: Vec<Self> = Vec::with_capacity(rows.len());
-        for row in rows {
-            let mut doc = Self::default();
+        let txns = PayeeTransaction::list(db, payee, page_size, page_token).await?;
+        let query = format!(
+            "SELECT {} FROM transaction WHERE uid=? AND id=? LIMIT 1",
+            fields.join(",")
+        );
+        let mut res: Vec<Self> = Vec::with_capacity(txns.len());
+        for txn in txns {
+            let mut doc = Self::with_pk(txn.uid, txn.txn);
+            let params = (doc.uid.to_cql(), doc.id.to_cql());
+            let row = db.execute(query.clone(), params).await?.single_row()?;
             let mut cols = ColumnsMap::with_capacity(fields.len());
             cols.fill(row, &fields)?;
             doc.fill(&cols);
@@ -922,33 +915,30 @@ impl Transaction {
         db: &scylladb::ScyllaDB,
         payee: xid::Id,
     ) -> anyhow::Result<Self> {
-        let fields = Self::select_fields(vec!["payload".to_string()], true)?;
-        let query = format!(
-                    "SELECT {} FROM transaction WHERE payee=? AND uid=? AND kind=? LIMIT ? ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s",
-                    fields.clone().join(",")
-                );
-        let params = (
-            payee.to_cql(),
-            SYS_ID.to_cql(),
-            TransactionKind::Award.as_ref(),
-            100_i32,
-        );
+        let query = "SELECT payee,txn,uid FROM payee_transaction WHERE payee=? AND uid=? LIMIT 1000 ALLOW FILTERING BYPASS CACHE USING TIMEOUT 3s";
+        let params = (payee.to_cql(), SYS_ID.to_cql());
+        let rows = db.execute_iter(query, params).await?;
 
-        let mut rows = db.execute_iter(query, params).await?;
-        if rows.is_empty() {
-            return Err(HTTPError::new(404, format!("No award transaction for {}", payee)).into());
-        } else if rows.len() >= 100 {
-            return Err(
-                HTTPError::new(500, format!("Too many award transactions for {}", payee)).into(),
-            );
+        let fields = vec!["payee".to_string(), "txn".to_string(), "uid".to_string()];
+        let mut res: Vec<PayeeTransaction> = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut doc = PayeeTransaction::default();
+            let mut cols = ColumnsMap::with_capacity(3);
+            cols.fill(row, &fields)?;
+            doc.fill(&cols);
+            res.push(doc);
+        }
+        res.sort_by(|a, b| a.txn.partial_cmp(&b.txn).unwrap());
+        for txn in res {
+            let mut doc = Self::with_pk(txn.uid, txn.txn);
+            doc.get_one(db, vec!["kind".to_string(), "payload".to_string()])
+                .await?;
+            if doc.kind == TransactionKind::Award.as_ref() {
+                return Ok(doc);
+            }
         }
 
-        let mut cols = ColumnsMap::with_capacity(fields.len());
-        let mut doc = Self::default();
-        cols.fill(rows.pop().unwrap(), &fields)?;
-        doc.fill(&cols);
-
-        Ok(doc)
+        return Err(HTTPError::new(404, format!("No award transaction for {}", payee)).into());
     }
 }
 

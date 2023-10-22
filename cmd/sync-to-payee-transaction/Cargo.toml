@@ -1,0 +1,25 @@
+[package]
+name = "sync-to-payee-transaction"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+scylla-orm = { path = "../../crates/scylla-orm" }
+walletbase = { path = "../../" }
+anyhow = { workspace = true }
+axum = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+base64 = { workspace = true }
+ciborium = { workspace = true }
+ciborium-io = { workspace = true }
+log = { workspace = true }
+scylla = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+structured-logger = { workspace = true }
+tokio = { workspace = true }
+xid = { workspace = true }
+futures = "0.3"

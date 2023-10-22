@@ -2146,6 +2146,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "sync-to-payee-transaction"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.21.4",
+ "bytes",
+ "ciborium",
+ "ciborium-io",
+ "futures",
+ "log",
+ "scylla",
+ "scylla-orm",
+ "serde",
+ "serde_json",
+ "structured-logger",
+ "tokio",
+ "walletbase",
+ "xid",
+]
+
+[[package]]
 name = "sync_wrapper"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2534,7 +2557,7 @@ dependencies = [
 
 [[package]]
 name = "walletbase"
-version = "1.0.5"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "anyhow",

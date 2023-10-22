@@ -9,7 +9,7 @@ use scylla_orm_macros::CqlOrm;
 use crate::db::scylladb::{self, extract_applied};
 
 pub const SYS_ID: xid::Id = xid::Id([0u8; 12]);
-pub const SYS_FEE_RATE: f32 = 0.001; // 1%
+pub const SYS_FEE_RATE: f32 = 0.001; // 0.1%
 
 #[derive(Debug, Default, Clone, CqlOrm)]
 pub struct Wallet {

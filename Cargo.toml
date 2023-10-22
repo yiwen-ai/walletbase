@@ -1,6 +1,6 @@
 [package]
 name = "walletbase"
-version = "1.0.5"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.64"
 description = ""
@@ -10,7 +10,7 @@ repository = "https://github.com/yiwen-ai/walletbase"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace]
-members = ["crates/*"]
+members = ["crates/*", "cmd/*"]
 
 [workspace.dependencies]
 anyhow = "1"

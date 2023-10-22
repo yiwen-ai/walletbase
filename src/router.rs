@@ -55,7 +55,6 @@ pub async fn new(cfg: conf::Conf) -> anyhow::Result<(Arc<api::AppState>, Router)
                 .route("/", routing::get(api::transaction::get))
                 .route("/list_outgo", routing::post(api::transaction::list_outgo))
                 .route("/list_income", routing::post(api::transaction::list_income))
-                .route("/list_shares", routing::post(api::transaction::list_shares))
                 .route("/commit", routing::post(api::transaction::commit))
                 .route("/cancel", routing::post(api::transaction::cancel)),
         )

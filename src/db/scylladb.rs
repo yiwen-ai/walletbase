@@ -2,7 +2,7 @@ use futures::{stream::StreamExt, Stream};
 use scylla::{
     frame::value::{BatchValues, ValueList},
     statement::{Consistency, SerialConsistency},
-    transport::{query_result::QueryResult, Compression, ExecutionProfile},
+    transport::{iterator::RowIterator, query_result::QueryResult, Compression, ExecutionProfile},
     CachingSession, Metrics, Session, SessionBuilder,
 };
 use std::{sync::Arc, time::Duration};
@@ -74,6 +74,15 @@ impl ScyllaDB {
             rows.push(next_row?);
         }
         Ok(rows)
+    }
+
+    pub async fn stream(
+        &self,
+        query: impl Into<Query>,
+        params: impl ValueList,
+    ) -> anyhow::Result<RowIterator> {
+        let stream = self.session.execute_iter(query, params).await?;
+        Ok(stream)
     }
 
     // https://opensource.docs.scylladb.com/master/cql/dml.html#batch-statement

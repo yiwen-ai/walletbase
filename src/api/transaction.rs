@@ -177,58 +177,6 @@ pub async fn list_income(
         fields,
         page_size,
         token_to_xid(&input.page_token),
-        kind,
-    )
-    .await?;
-    let next_page_token = if res.len() >= page_size as usize {
-        to.with_option(token_from_xid(res.last().unwrap().id))
-    } else {
-        None
-    };
-
-    Ok(to.with(SuccessResponse {
-        total_size: None,
-        next_page_token,
-        result: res
-            .iter()
-            .map(|r| TransactionOutput::from(r.to_owned(), &to))
-            .collect(),
-    }))
-}
-
-pub async fn list_shares(
-    State(app): State<Arc<AppState>>,
-    Extension(ctx): Extension<Arc<ReqContext>>,
-    to: PackObject<Pagination>,
-) -> Result<PackObject<SuccessResponse<Vec<TransactionOutput>>>, HTTPError> {
-    let (to, input) = to.unpack();
-    input.validate()?;
-
-    let page_size = input.page_size.unwrap_or(10);
-    ctx.set_kvs(vec![
-        ("action", "list_shares".into()),
-        ("uid", input.uid.to_string().into()),
-        ("page_size", page_size.into()),
-    ])
-    .await;
-
-    let fields = input.fields.unwrap_or_default();
-    let kind = if input.kind.is_some() {
-        Some(
-            db::TransactionKind::from_str(&input.kind.unwrap())
-                .map_err(|e| HTTPError::new(400, format!("Invalid kind: {}", e)))?,
-        )
-    } else {
-        None
-    };
-
-    let res = db::Transaction::list_by_sub_payee(
-        &app.scylla,
-        input.uid.unwrap(),
-        fields,
-        page_size,
-        token_to_xid(&input.page_token),
-        kind,
     )
     .await?;
     let next_page_token = if res.len() >= page_size as usize {

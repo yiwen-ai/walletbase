@@ -51,7 +51,7 @@ COPY --from=planner /src/recipe.json recipe.json
 RUN xx-cargo chef cook --release --recipe-path recipe.json
 
 COPY . .
-RUN xx-cargo build --release \
+RUN xx-cargo build --release -p walletbase -p sync-to-payee-transaction \
     && mv target/$(xx-cargo --print-target-triple)/release /src/release
 
 FROM debian:bookworm-slim AS runtime
@@ -67,6 +67,7 @@ ENV OPENSSL_LIB_DIR=/usr/lib/x86_64-linux-gnu
 WORKDIR /app
 COPY --from=builder /src/config ./config
 COPY --from=builder /src/release/walletbase ./
+COPY --from=builder /src/release/sync-to-payee-transaction ./
 ENV CONFIG_FILE_PATH=./config/config.toml
 
 ENTRYPOINT ["./walletbase"]

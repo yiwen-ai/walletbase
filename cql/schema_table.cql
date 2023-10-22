@@ -36,9 +36,19 @@ CREATE TABLE IF NOT EXISTS transaction (
     AND compression = {'sstable_compression': 'LZ4Compressor'}
     AND default_time_to_live = 0;
 
-CREATE INDEX transaction_payee ON transaction (payee);
-CREATE INDEX transaction_sub_payee ON transaction (sub_payee);
 CREATE INDEX transaction_uid_kind ON transaction ((uid), kind);
+
+CREATE TABLE IF NOT EXISTS payee_transaction (
+    payee BLOB, -- payee id
+    txn   BLOB, -- transaction id
+    uid   BLOB, -- transaction uid
+    PRIMARY KEY (payee, txn)
+) WITH CLUSTERING ORDER BY (txn DESC)
+    AND caching = {'enabled': 'true'}
+    AND comment = 'payee transactions'
+    AND compaction = {'class': 'SizeTieredCompactionStrategy'}
+    AND compression = {'sstable_compression': 'LZ4Compressor'}
+    AND default_time_to_live = 0;
 
 CREATE TABLE IF NOT EXISTS credit (
     uid         BLOB,    -- user id
